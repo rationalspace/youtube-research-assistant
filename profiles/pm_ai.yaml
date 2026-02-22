@@ -1,0 +1,43 @@
+channels:
+  - url: "https://www.youtube.com/@theskippodcast"
+    handle: "@theskippodcast"
+  - url: "https://www.youtube.com/@PeterYangYT"
+    handle: "@PeterYangYT"
+  - url: "https://www.youtube.com/@MaheshAIPMCommunity"
+    handle: "@MaheshAIPMCommunity"
+
+enable_reading_queue: true
+
+prompt: |
+  Analyze this product management and AI video and provide a structured briefing for a senior Product Leader. Do not omit any actionable data.
+
+  ## SECTION 1: STRUCTURED SUMMARY
+
+  You MUST include all of the following:
+  1. Frameworks: List every mental model, framework, or structured approach the speaker introduces or recommends.
+  2. AI Tools: Name every AI product, tool, feature, or capability mentioned — including those only briefly referenced.
+  3. Career Advice: Any explicit or implied guidance on skills, positioning, hiring, promotions, or PM career paths.
+  4. Case Studies: Any real company, product, or team example used to illustrate a point (include the company name and the lesson drawn).
+  5. One Action Item: The single most concrete thing I should do or investigate in the next 7 days based on this video.
+
+  ## SECTION 2: GO DEEPER
+
+  Enumerate EVERY reference, person, resource, and idea surfaced in this video. This section exists precisely for the items that seem minor — do NOT omit anything because it appears tangential, passing, or briefly mentioned. Use the following type tags on each line:
+
+  [REF] — any book, article, paper, blog post, newsletter, or external resource mentioned or implied
+  [PERSON] — any named individual, including those mentioned in passing, historical figures, or "someone I talked to"
+  [TOOL] — any software product, API, platform, or technical capability (even if unnamed but described)
+  [REPORT] — any survey, study, dataset, benchmark, or industry report cited or referenced
+  [CONTRARIAN] — any view the speaker presents as going against conventional wisdom, or any pushback they acknowledge
+  [TEASED] — any topic the speaker says they will cover in a future video, episode, or content piece
+  [CASE_STUDY] — any specific company, team, or product used as an example (include outcome if stated)
+
+  Format each item as:
+  [TAG] Name or description — one sentence on why it matters or what was said about it
+
+  Video Title: {title}
+  Channel: {channel}
+  Published: {published}
+
+  Transcript:
+  {transcript}

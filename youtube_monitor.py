@@ -7,6 +7,8 @@ Monitors specified YouTube channels for new videos and sends daily email summari
 import os
 import json
 import time
+import argparse
+import yaml
 from datetime import datetime, timedelta
 from pathlib import Path
 import google.generativeai as genai
@@ -21,7 +23,8 @@ from email.mime.multipart import MIMEMultipart
 # Database integration
 from db_manager import init_database, insert_video_summary
 
-# Configuration
+# Legacy CONFIG dict — superseded by profiles/ YAML files.
+# Kept for reference. Not used when --profile flag is provided.
 CONFIG = {
     "channels": [
         {
@@ -54,10 +57,10 @@ CONFIG = {
     # All videos are included, even YouTube Shorts (under 60 seconds).
 }
 
-# File to track processed videos
+# Default processed videos file (overridden per-profile in __init__)
 PROCESSED_VIDEOS_FILE = Path.home() / ".youtube_monitor_processed.json"
 
-# Summary prompt template
+# Legacy SUMMARY_PROMPT — superseded by profile YAML's prompt field.
 SUMMARY_PROMPT = """Analyze this financial video and provide a summary for a Product Leader. Do not omit any actionable data.
 
 You MUST include:
@@ -76,45 +79,83 @@ Transcript:
 """
 
 
+def load_profile(profile_name):
+    """Load a profile YAML file from the profiles/ directory."""
+    profiles_dir = Path(__file__).parent / "profiles"
+    profile_path = profiles_dir / f"{profile_name}.yaml"
+
+    if not profile_path.exists():
+        available = sorted(p.stem for p in profiles_dir.glob("*.yaml")) if profiles_dir.exists() else []
+        print(f"\nError: Profile '{profile_name}' not found at {profile_path}")
+        if available:
+            print(f"Available profiles: {', '.join(available)}")
+        else:
+            print(f"No profiles found in: {profiles_dir}")
+        raise SystemExit(1)
+
+    with open(profile_path, 'r') as f:
+        config = yaml.safe_load(f)
+
+    for key in ('channels', 'prompt'):
+        if key not in config:
+            print(f"\nError: Profile '{profile_name}' missing required key: '{key}'")
+            raise SystemExit(1)
+
+    config.setdefault('enable_reading_queue', False)
+    return config
+
+
 class YouTubeMonitor:
-    def __init__(self):
+    def __init__(self, profile_name, profile_config):
+        # Store profile identity and config
+        self.profile_name = profile_name
+        self.profile_config = profile_config
+
+        # Extract profile-specific values
+        self.channels = profile_config['channels']
+        self.summary_prompt = profile_config['prompt']
+        self.enable_reading_queue = profile_config.get('enable_reading_queue', False)
+
+        # Profile-specific processed videos tracking file
+        self.processed_videos_file = Path.home() / f".youtube_monitor_processed_{profile_name}.json"
+
+        # Profile-specific output directory
+        self.output_dir = Path("summaries") / profile_name
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
         # Load API keys from environment variables
         self.youtube_api_key = os.getenv('YOUTUBE_API_KEY')
         self.gemini_api_key = os.getenv('GEMINI_API_KEY')
         self.gmail_user = os.getenv('GMAIL_USER')
         self.gmail_app_password = os.getenv('GMAIL_APP_PASSWORD')
         self.recipient_email = os.getenv('RECIPIENT_EMAIL', self.gmail_user)
-        
-        if not all([self.youtube_api_key, self.gemini_api_key, 
+
+        if not all([self.youtube_api_key, self.gemini_api_key,
                    self.gmail_user, self.gmail_app_password]):
             raise ValueError("Missing required environment variables. See setup instructions.")
-        
+
         self.youtube = build('youtube', 'v3', developerKey=self.youtube_api_key)
-        
+
         # Configure Gemini
         genai.configure(api_key=self.gemini_api_key)
         # Use Gemini 2.5 Flash (supports audio and is the stable version)
         self.model = genai.GenerativeModel('gemini-2.5-flash')
-        
+
         self.processed_videos = self._load_processed_videos()
-        
-        # Create output directory if it doesn't exist
-        self.output_dir = Path(CONFIG['output_directory'])
-        self.output_dir.mkdir(exist_ok=True)
-        
+
         # Initialize database
         init_database()
     
     def _load_processed_videos(self):
         """Load the set of already processed video IDs."""
-        if PROCESSED_VIDEOS_FILE.exists():
-            with open(PROCESSED_VIDEOS_FILE, 'r') as f:
+        if self.processed_videos_file.exists():
+            with open(self.processed_videos_file, 'r') as f:
                 return set(json.load(f))
         return set()
-    
+
     def _save_processed_videos(self):
         """Save the set of processed video IDs."""
-        with open(PROCESSED_VIDEOS_FILE, 'w') as f:
+        with open(self.processed_videos_file, 'w') as f:
             json.dump(list(self.processed_videos), f)
     
     def get_channel_id(self, handle):
@@ -420,7 +461,7 @@ Recommendation: Watch the video directly to get the full analysis."""
         if len(transcript) > max_chars:
             transcript = transcript[:max_chars] + "... [transcript truncated]"
         
-        prompt = SUMMARY_PROMPT.format(
+        prompt = self.summary_prompt.format(
             title=video['title'],
             channel=video['channel'],
             published=video['published'],
@@ -487,7 +528,7 @@ Recommendation: Watch the video directly to get the full analysis."""
         all_summaries = []
         new_videos_found = False
         
-        for channel_config in CONFIG['channels']:
+        for channel_config in self.channels:
             handle = channel_config['handle']
             print(f"Checking channel: {handle}")
             
@@ -511,7 +552,7 @@ Recommendation: Watch the video directly to get the full analysis."""
                 print(f"  📝 Generating summary...")
                 
                 # Check if video has transcript (if skip_no_transcript is enabled)
-                if CONFIG.get('skip_no_transcript', False):
+                if self.profile_config.get('skip_no_transcript', False):
                     transcript = self.get_transcript(video['id'])
                     if not transcript:
                         print(f"  ⏭️  Skipping (no transcript available)")
@@ -573,7 +614,7 @@ URL: https://youtube.com/watch?v={video['id']}
             timestamp = datetime.now().strftime('%Y-%m-%d')
             filename = f"daily_summary_{timestamp}.txt"
             
-            content = f"""Daily YouTube Financial Video Summary
+            content = f"""Daily YouTube Video Summary - Profile: {self.profile_name}
 Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
 Found {len(all_summaries)} new video(s):
@@ -581,14 +622,14 @@ Found {len(all_summaries)} new video(s):
 {''.join(all_summaries)}
 
 ---
-This is an automated report from YouTube Monitor.
+Automated report from YouTube Monitor (profile: {self.profile_name}).
 """
-            
+
             # Save to file
             self.save_to_file(content, filename)
-            
+
             # Send email with same content
-            subject = f"📊 Daily Financial Video Summary - {len(all_summaries)} New Video(s)"
+            subject = f"[{self.profile_name}] 📊 Daily Video Summary - {len(all_summaries)} New Video(s)"
             self.send_email(subject, content)
         else:
             print("\n📭 No new videos found.")
@@ -599,21 +640,23 @@ This is an automated report from YouTube Monitor.
     
     def run_forever(self):
         """Run the monitor continuously."""
+        check_interval = self.profile_config.get('check_interval_hours', 24)
         print("🚀 YouTube Monitor started!")
-        print(f"Checking every {CONFIG['check_interval_hours']} hours")
-        print(f"Monitoring {len(CONFIG['channels'])} channels")
+        print(f"Profile: {self.profile_name}")
+        print(f"Checking every {check_interval} hours")
+        print(f"Monitoring {len(self.channels)} channels")
         print("Press Ctrl+C to stop\n")
-        
+
         while True:
             try:
                 self.check_channels()
-                
+
                 # Wait until next check
-                next_check = datetime.now() + timedelta(hours=CONFIG['check_interval_hours'])
+                next_check = datetime.now() + timedelta(hours=check_interval)
                 print(f"💤 Next check scheduled for: {next_check.strftime('%Y-%m-%d %H:%M:%S')}")
-                print(f"   Sleeping for {CONFIG['check_interval_hours']} hours...\n")
-                
-                time.sleep(CONFIG['check_interval_hours'] * 3600)
+                print(f"   Sleeping for {check_interval} hours...\n")
+
+                time.sleep(check_interval * 3600)
             
             except KeyboardInterrupt:
                 print("\n\n👋 YouTube Monitor stopped by user.")
@@ -626,9 +669,28 @@ This is an automated report from YouTube Monitor.
 
 def main():
     """Main entry point."""
+    parser = argparse.ArgumentParser(description='YouTube Channel Monitor with AI Summaries')
+    parser.add_argument(
+        '--profile',
+        required=True,
+        metavar='PROFILE_NAME',
+        help='Profile to use (e.g. finance, pm_ai). Loads from profiles/{name}.yaml'
+    )
+    parser.add_argument(
+        '--once',
+        action='store_true',
+        help='Run a single check and exit instead of running continuously'
+    )
+    args = parser.parse_args()
+
+    profile_config = load_profile(args.profile)
+
     try:
-        monitor = YouTubeMonitor()
-        monitor.run_forever()
+        monitor = YouTubeMonitor(args.profile, profile_config)
+        if args.once:
+            monitor.check_channels()
+        else:
+            monitor.run_forever()
     except ValueError as e:
         print(f"\n❌ Configuration Error: {e}\n")
         print("Please set the following environment variables:")
@@ -641,7 +703,7 @@ def main():
     except Exception as e:
         print(f"\n❌ Fatal error: {e}")
         return 1
-    
+
     return 0
 
 

@@ -7,6 +7,7 @@ Ideal for use with cron/Task Scheduler.
 
 import sys
 import os
+import argparse
 
 # Add support for .env file
 try:
@@ -16,14 +17,25 @@ except ImportError:
     print("Note: python-dotenv not installed. Using environment variables only.")
 
 # Import the main monitor class
-from youtube_monitor import YouTubeMonitor
+from youtube_monitor import YouTubeMonitor, load_profile
 
 
 def main():
     """Run a single check and exit."""
+    parser = argparse.ArgumentParser(description='YouTube Monitor - Single Check')
+    parser.add_argument(
+        '--profile',
+        required=True,
+        metavar='PROFILE_NAME',
+        help='Profile to use (e.g. finance, pm_ai)'
+    )
+    args = parser.parse_args()
+
+    profile_config = load_profile(args.profile)
+
     try:
-        print("🔍 Running single check...")
-        monitor = YouTubeMonitor()
+        print(f"🔍 Running single check for profile: {args.profile}")
+        monitor = YouTubeMonitor(args.profile, profile_config)
         monitor.check_channels()
         print("✅ Check complete!")
         return 0

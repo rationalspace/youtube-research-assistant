@@ -15,4 +15,4 @@ source venv/bin/activate
 # Run single check
 echo "🔍 Running single check..."
 echo ""
-python check_once.py
+python check_once.py "$@"

@@ -1,0 +1,30 @@
+channels:
+  - url: "https://www.youtube.com/@parkevtatevosiancfa9544"
+    handle: "@parkevtatevosiancfa9544"
+  - url: "https://www.youtube.com/@AkshatZayn"
+    handle: "@AkshatZayn"
+  - url: "https://www.youtube.com/@FinTek"
+    handle: "@FinTek"
+  - url: "https://www.youtube.com/@SahilBhadviya"
+    handle: "@SahilBhadviya"
+  - url: "https://www.youtube.com/@TickerSymbolYOU"
+    handle: "@TickerSymbolYOU"
+
+enable_reading_queue: false
+
+prompt: |
+  Analyze this financial video and provide a summary for a Product Leader. Do not omit any actionable data.
+
+  You MUST include:
+  1. Specific Tickers: List every stock or asset mentioned.
+  2. Price Info: Any price targets, current prices, or entry points mentioned.
+  3. The Rating: Did the creator give a Buy, Sell, or Hold rating? (If they didn't say it explicitly, summarize their 'vibe' or sentiment).
+  4. The 'Why': The core 2-minute investment thesis.
+  5. Actionability: What is the one thing I should do or watch after seeing this?
+
+  Video Title: {title}
+  Channel: {channel}
+  Published: {published}
+
+  Transcript:
+  {transcript}

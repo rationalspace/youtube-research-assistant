@@ -15,4 +15,4 @@ source venv/bin/activate
 # Run the monitor
 echo "🚀 Starting YouTube Monitor..."
 echo ""
-python youtube_monitor.py
+python youtube_monitor.py "$@"
