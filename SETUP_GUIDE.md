@@ -78,19 +78,38 @@ load_dotenv()
 
 ## Usage
 
-### Run Once (Manual Check)
+### Run Once (both profiles — sends 2 emails)
 ```bash
-python youtube_monitor.py
+./run-once.sh
 ```
-This will check once and exit.
 
-### Run Continuously (Daily Automated Checks)
-The script runs continuously by default, checking every 24 hours:
+### Run a single profile manually
 ```bash
-python youtube_monitor.py
+source venv/bin/activate
+python check_once.py --profile finance
+python check_once.py --profile pm_ai
+```
+
+### Run Continuously (checks every 24 hours)
+```bash
+./run.sh
 ```
 
 To stop: Press `Ctrl+C`
+
+### Start the API Server (optional)
+```bash
+./start_server.sh
+# API available at http://localhost:8001
+# Interactive docs at http://localhost:8001/docs
+```
+
+Verify the server is running:
+```bash
+curl http://localhost:8001/health
+```
+
+See `API_DOCUMENTATION.md` for full endpoint reference.
 
 ### Run as Background Service
 
@@ -140,21 +159,40 @@ sudo systemctl status youtube-monitor
 
 ## Configuration
 
-Edit the `CONFIG` dictionary in `youtube_monitor.py`:
+Channels and prompts are configured via YAML profile files in the `profiles/` directory. Do **not** edit `youtube_monitor.py` directly.
 
-```python
-CONFIG = {
-    "channels": [
-        {
-            "url": "https://www.youtube.com/@parkevtatevosiancfa9544",
-            "handle": "@parkevtatevosiancfa9544"
-        },
-        # Add more channels here
-    ],
-    "check_interval_hours": 24,  # How often to check
-    "lookback_hours": 25,  # How far back to look for videos
-}
+### Built-in profiles
+
+| File | Purpose |
+|------|---------|
+| `profiles/finance.yaml` | 5 finance channels — tickers, price targets, buy/sell ratings |
+| `profiles/pm_ai.yaml` | 3 PM/AI channels — frameworks, AI tools, `[REF]`/`[TOOL]` deep analysis |
+
+### Add or modify channels
+
+Edit the relevant profile YAML:
+
+```yaml
+# profiles/finance.yaml
+channels:
+  - url: "https://www.youtube.com/@parkevtatevosiancfa9544"
+    handle: "@parkevtatevosiancfa9544"
+  # Add a new channel:
+  - url: "https://www.youtube.com/@YourNewChannel"
+    handle: "@YourNewChannel"
 ```
+
+### Create a new profile
+
+Copy an existing profile and customise:
+
+```bash
+cp profiles/finance.yaml profiles/myprofile.yaml
+# Edit channels and prompt in profiles/myprofile.yaml
+python check_once.py --profile myprofile
+```
+
+The `prompt` field supports `{title}`, `{channel}`, `{published}`, and `{transcript}` placeholders.
 
 ## Email Report Format
 

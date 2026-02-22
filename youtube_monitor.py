@@ -342,7 +342,8 @@ Return only the transcript text, nothing else."""
         # First, try to get YouTube captions
         try:
             # Try to get transcript in multiple languages
-            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+            api = YouTubeTranscriptApi()
+            transcript_list = api.list(video_id)
             
             # First try to find manually created transcripts
             try:
@@ -364,7 +365,7 @@ Return only the transcript text, nothing else."""
                         transcript_data = None
             
             if transcript_data:
-                transcript_text = ' '.join([entry['text'] for entry in transcript_data])
+                transcript_text = ' '.join([entry.text for entry in transcript_data])
                 print(f"    ✓ Transcript retrieved from YouTube captions")
                 self._last_transcript_method = 'youtube_captions'
                 return transcript_text

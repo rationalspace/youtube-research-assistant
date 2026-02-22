@@ -59,7 +59,7 @@ That's it! 🎉
 ./run.sh
 ```
 
-### Run once and exit
+### Run once and exit (runs BOTH profiles → sends 2 emails)
 ```bash
 ./run-once.sh
 ```
@@ -126,32 +126,24 @@ crontab -e
 
 ## 📝 Add More Channels
 
-Edit `youtube_monitor.py` and add to the `CONFIG["channels"]` list:
+Channels are configured in YAML profile files — **do not edit `youtube_monitor.py`**.
 
-```python
-CONFIG = {
-    "channels": [
-        {
-            "url": "https://www.youtube.com/@parkevtatevosiancfa9544",
-            "handle": "@parkevtatevosiancfa9544"
-        },
-        {
-            "url": "https://www.youtube.com/@AkshatZayn",
-            "handle": "@AkshatZayn"
-        },
-        {
-            "url": "https://www.youtube.com/@FinTek",
-            "handle": "@FinTek"
-        },
-        # Add your new channel here
-        {
-            "url": "https://www.youtube.com/@YourNewChannel",
-            "handle": "@YourNewChannel"
-        }
-    ],
-    "check_interval_hours": 24,
-    "lookback_hours": 25,
-}
+Edit the relevant profile in `profiles/`:
+
+```yaml
+# profiles/finance.yaml  (or profiles/pm_ai.yaml)
+channels:
+  - url: "https://www.youtube.com/@parkevtatevosiancfa9544"
+    handle: "@parkevtatevosiancfa9544"
+  # Add your new channel here:
+  - url: "https://www.youtube.com/@YourNewChannel"
+    handle: "@YourNewChannel"
+```
+
+To create a completely new profile, copy an existing YAML file and customise it:
+```bash
+cp profiles/finance.yaml profiles/myprofile.yaml
+python check_once.py --profile myprofile
 ```
 
 ## 💰 Costs
@@ -176,12 +168,29 @@ A: Check your spam folder, verify your Gmail app password is correct (16 charact
 **Q: The script says "No new videos found"**
 A: That's normal! It only emails when NEW videos are posted since the last check.
 
+## 🔌 Start the API Server (Optional)
+
+Query your summaries via REST API:
+
+```bash
+./start_server.sh
+# → http://localhost:8001/docs
+```
+
+Key endpoints:
+```bash
+curl "http://localhost:8001/ask?q=TSLA&days=7"     # search summaries
+curl "http://localhost:8001/digest?days=7"           # weekly digest by channel
+curl "http://localhost:8001/stats"                   # database stats
+```
+
 ## 🎯 Next Steps
 
 Once everything is working:
 1. Let it run for a day to test
-2. Check your email for the summary
-3. Adjust settings as needed
-4. Set up cron for automatic scheduling (optional)
+2. Check your email — you'll get 2 emails (Finance + PM/AI)
+3. (Optional) Start the API server to query summaries
+4. Set up cron for automatic daily scheduling
+5. Add more channels by editing the profile YAML files
 
 For more details, see `SETUP_GUIDE.md`.
