@@ -18,6 +18,9 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
+# Database integration
+from db_manager import init_database, insert_video_summary
+
 # Configuration
 CONFIG = {
     "channels": [
@@ -32,6 +35,14 @@ CONFIG = {
         {
             "url": "https://www.youtube.com/@FinTek",
             "handle": "@FinTek"
+        },
+        {
+            "url": "https://www.youtube.com/@SahilBhadviya",
+            "handle": "@SahilBhadviya"
+        },
+        {
+            "url": "https://www.youtube.com/@TickerSymbolYOU",
+            "handle": "@TickerSymbolYOU"
         }
     ],
     "check_interval_hours": 24,  # Check once per day
@@ -90,6 +101,9 @@ class YouTubeMonitor:
         # Create output directory if it doesn't exist
         self.output_dir = Path(CONFIG['output_directory'])
         self.output_dir.mkdir(exist_ok=True)
+        
+        # Initialize database
+        init_database()
     
     def _load_processed_videos(self):
         """Load the set of already processed video IDs."""
@@ -311,6 +325,7 @@ Return only the transcript text, nothing else."""
             if transcript_data:
                 transcript_text = ' '.join([entry['text'] for entry in transcript_data])
                 print(f"    ✓ Transcript retrieved from YouTube captions")
+                self._last_transcript_method = 'youtube_captions'
                 return transcript_text
             
         except Exception as e:
@@ -342,6 +357,9 @@ Return only the transcript text, nothing else."""
             print(f"    ✓ Cleaned up audio file")
         except:
             pass
+        
+        if transcript:
+            self._last_transcript_method = 'audio_transcription'
         
         return transcript
     
@@ -508,6 +526,9 @@ Recommendation: Watch the video directly to get the full analysis."""
                     self.processed_videos.add(video['id'])
                     continue
                 
+                # Determine source type based on how we got the transcript
+                transcript_method = getattr(self, '_last_transcript_method', 'youtube_captions')
+                
                 video_summary = f"""
 {'='*60}
 📺 {video['title']}
@@ -521,6 +542,26 @@ URL: https://youtube.com/watch?v={video['id']}
 """
                 all_summaries.append(video_summary)
                 self.processed_videos.add(video['id'])
+                
+                # Save to database
+                db_data = {
+                    'video_id': video['id'],
+                    'channel_name': video['channel'],
+                    'video_title': video['title'],
+                    'video_url': f"https://youtube.com/watch?v={video['id']}",
+                    'published_date': video['published'],
+                    'source_type': transcript_method,
+                    'summary_text': summary,
+                    'duration_seconds': video.get('duration_seconds', 0),
+                    # Optional: could extract these from summary with additional parsing
+                    'key_topics': None,
+                    'recommendations': None,
+                    'action_items': None
+                }
+                
+                row_id = insert_video_summary(db_data)
+                if row_id:
+                    print(f"  💾 Saved to database (ID: {row_id})")
                 
                 print(f"  ✓ Summary generated\n")
         
