@@ -35,3 +35,6 @@ tmp/
 *.mp3
 *.m4a
 *.wav
+
+# Claude Code internal directory (worktrees, plans, session data)
+.claude/
