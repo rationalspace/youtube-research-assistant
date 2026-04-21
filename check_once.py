@@ -17,7 +17,7 @@ except ImportError:
     print("Note: python-dotenv not installed. Using environment variables only.")
 
 # Import the main monitor class
-from youtube_monitor import YouTubeMonitor, load_profile
+from youtube_monitor import YouTubeMonitor, load_profile, QuotaExceededError
 
 
 def main():
@@ -38,6 +38,10 @@ def main():
         monitor = YouTubeMonitor(args.profile, profile_config)
         monitor.check_channels()
         print("✅ Check complete!")
+        return 0
+    except QuotaExceededError as e:
+        print(f"\n🚫 API quota exhausted: {e}")
+        print("   No email sent. Re-run tomorrow when quota resets.")
         return 0
     except ValueError as e:
         print(f"\n❌ Configuration Error: {e}\n")
