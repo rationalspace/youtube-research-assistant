@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import google.generativeai as genai
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from youtube_transcript_api import YouTubeTranscriptApi
 import yt_dlp
 import tempfile
@@ -77,6 +78,33 @@ Published: {published}
 Transcript:
 {transcript}
 """
+
+
+class QuotaExceededError(Exception):
+    """Raised when a YouTube or Gemini API quota is exhausted."""
+    pass
+
+
+def _is_quota_error(exc):
+    """Return True if exc represents an API quota exhaustion."""
+    # YouTube Data API: HttpError 403 with quota-related reason
+    if isinstance(exc, HttpError):
+        if exc.resp.status == 403 and any(
+            kw in str(exc).lower()
+            for kw in ('quotaexceeded', 'dailylimitexceeded', 'ratelimitexceeded')
+        ):
+            return True
+    # Gemini API: ResourceExhausted (429)
+    try:
+        from google.api_core.exceptions import ResourceExhausted
+        if isinstance(exc, ResourceExhausted):
+            return True
+    except ImportError:
+        pass
+    # Fallback: string match on any exception
+    msg = str(exc).lower()
+    return any(kw in msg for kw in ('quotaexceeded', 'dailylimitexceeded', 'ratelimitexceeded',
+                                     'resource_exhausted', 'dailylimit'))
 
 
 def load_profile(profile_name):
@@ -173,6 +201,8 @@ class YouTubeMonitor:
             if response['items']:
                 return response['items'][0]['snippet']['channelId']
         except Exception as e:
+            if _is_quota_error(e):
+                raise QuotaExceededError(f"YouTube API quota exceeded: {e}") from e
             print(f"Error getting channel ID for {handle}: {e}")
         return None
     
@@ -244,6 +274,8 @@ class YouTubeMonitor:
             return valid_videos
             
         except Exception as e:
+            if _is_quota_error(e):
+                raise QuotaExceededError(f"YouTube API quota exceeded: {e}") from e
             print(f"Error getting videos for channel {channel_id}: {e}")
             import traceback
             traceback.print_exc()
@@ -334,6 +366,8 @@ Return only the transcript text, nothing else."""
             return transcript
             
         except Exception as e:
+            if _is_quota_error(e):
+                raise QuotaExceededError(f"Gemini API quota exceeded: {e}") from e
             print(f"    Error transcribing audio with Gemini: {e}")
             return None
     
@@ -444,6 +478,8 @@ VIDEO URL: https://youtube.com/watch?v={video['id']}
                     summary = "⚠️ LIMITED INFO - Transcript not available, summary based on description only:\n\n" + response.text
                     return summary
                 except Exception as e:
+                    if _is_quota_error(e):
+                        raise QuotaExceededError(f"Gemini API quota exceeded: {e}") from e
                     print(f"    Error generating description-based summary: {e}")
             
             # Last resort: return basic info
@@ -474,6 +510,8 @@ Recommendation: Watch the video directly to get the full analysis."""
             summary = response.text
             return summary
         except Exception as e:
+            if _is_quota_error(e):
+                raise QuotaExceededError(f"Gemini API quota exceeded: {e}") from e
             print(f"Error generating summary for video {video['id']}: {e}")
             return f"⚠️ Error generating summary: {str(e)}"
     
@@ -662,6 +700,12 @@ Automated report from YouTube Monitor (profile: {self.profile_name}).
             except KeyboardInterrupt:
                 print("\n\n👋 YouTube Monitor stopped by user.")
                 break
+            except QuotaExceededError as e:
+                next_check = datetime.now() + timedelta(hours=check_interval)
+                print(f"\n🚫 API quota exhausted: {e}")
+                print(f"   No email will be sent for this run.")
+                print(f"   Resuming at next scheduled check: {next_check.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                time.sleep(check_interval * 3600)
             except Exception as e:
                 print(f"\n⚠️ Error during check: {e}")
                 print("Waiting 1 hour before retry...\n")
@@ -692,6 +736,10 @@ def main():
             monitor.check_channels()
         else:
             monitor.run_forever()
+    except QuotaExceededError as e:
+        print(f"\n🚫 API quota exhausted: {e}")
+        print("   No email sent. Re-run tomorrow when quota resets.")
+        return 0
     except ValueError as e:
         print(f"\n❌ Configuration Error: {e}\n")
         print("Please set the following environment variables:")
