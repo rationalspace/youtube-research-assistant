@@ -108,7 +108,11 @@ def _is_quota_error(exc):
 
 
 def load_profile(profile_name):
-    """Load a profile YAML file from the profiles/ directory."""
+    """Load a profile YAML file from profiles/{name}.yaml.
+
+    Returns a dict with keys: channels, prompt, enable_reading_queue.
+    Exits with a clear error message if the file is missing or malformed.
+    """
     profiles_dir = Path(__file__).parent / "profiles"
     profile_path = profiles_dir / f"{profile_name}.yaml"
 
@@ -701,6 +705,8 @@ Automated report from YouTube Monitor (profile: {self.profile_name}).
                 print("\n\n👋 YouTube Monitor stopped by user.")
                 break
             except QuotaExceededError as e:
+                # Stop immediately — don't retry hourly, quota won't recover until midnight Pacific.
+                # Sleep the full check interval so the next attempt aligns with the normal schedule.
                 next_check = datetime.now() + timedelta(hours=check_interval)
                 print(f"\n🚫 API quota exhausted: {e}")
                 print(f"   No email will be sent for this run.")

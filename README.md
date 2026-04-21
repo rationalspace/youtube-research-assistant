@@ -19,9 +19,10 @@ Automated YouTube video summarization tool that monitors your favourite creators
 - ✅ **SQLite Local Storage** — Every summary persisted in `research.db` with FTS5 full-text search
 - ✅ **REST API** — FastAPI server on port 8001 to query summaries and trigger ingestion
 - ✅ **Multi-Profile Monitoring** — Finance (5 channels) + PM/AI (3 channels) with custom prompts
-- ✅ **Dual Email Digests** — One email per profile sent by a single `./run-once.sh` call
+- ✅ **Per-Profile Email Digests** — Each profile sends its own email with a `[profile]` subject prefix
 - ✅ **Duplicate Detection** — Tracks processed videos per profile to avoid redundant work
 - ✅ **Member-Only Detection** — Automatically skips restricted content
+- ✅ **Quota-Aware Early Exit** — Detects YouTube/Gemini API quota exhaustion immediately, stops processing, suppresses the email, and waits until the next scheduled run instead of retrying hourly
 - ✅ **Daily Automation** — Set it and forget it with cron
 
 ## 🏗️ Architecture
@@ -200,16 +201,23 @@ See `API_DOCUMENTATION.md` for full details and code examples.
 
 ## ⏰ Cron / Daily Automation
 
-`run-once.sh` runs **both profiles sequentially** and sends **2 separate emails**.
+Each profile has its own cron-friendly shell script. Finance runs every day; PM/AI runs Mon/Wed/Fri to avoid burning through the Gemini free quota on less-active channels.
 
-### macOS/Linux cron
+### macOS/Linux cron setup
 
 ```bash
 crontab -e
-
-# Run at 8 AM daily — sends Finance email + PM/AI email
-0 8 * * * cd /path/to/stock-summary-youtube && /bin/bash run-once.sh >> monitor.log 2>&1
 ```
+
+```cron
+# Finance: every day at 8 AM
+0 8 * * * cd /path/to/youtube-research-assistant && PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin /bin/bash run-finance.sh >> cron.log 2>&1
+
+# PM/AI: Monday, Wednesday, Friday at 8 AM
+0 8 * * 1,3,5 cd /path/to/youtube-research-assistant && PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin /bin/bash run-pm-ai.sh >> cron.log 2>&1
+```
+
+> **Quota handling:** If the YouTube or Gemini API quota is exhausted mid-run, the script stops immediately, skips sending the email for that run, logs `🚫 API quota exhausted`, and exits cleanly. The next scheduled cron run picks up where it left off.
 
 ## 📁 Project Structure
 
@@ -222,10 +230,12 @@ youtube-research-assistant/
 ├── query_db.py               # CLI tool for querying research.db
 ├── profiles/
 │   ├── finance.yaml          # Finance profile: 5 channels, ticker/rating prompt
-│   └── pm_ai.yaml            # PM/AI profile: 3 channels, deep analysis prompt
+│   └── pm_ai.yaml            # PM/AI profile: 3 channels, deep analysis + GO DEEPER prompt
 ├── research.db               # SQLite database (auto-created on first run)
-├── run-once.sh               # Runs both profiles → sends 2 emails
-├── run.sh                    # Continuous mode (checks every 24h)
+├── run-finance.sh            # Cron script: runs finance profile → sends email
+├── run-pm-ai.sh              # Cron script: runs pm_ai profile → sends email
+├── run-once.sh               # Generic single-run wrapper (pass --profile <name>)
+├── run.sh                    # Continuous mode (checks every 24h, pass --profile <name>)
 ├── start_server.sh           # Starts FastAPI server on port 8001
 ├── setup.sh                  # One-time setup
 ├── requirements.txt          # Python dependencies
@@ -270,8 +280,14 @@ youtube-research-assistant/
 source venv/bin/activate && pip install PyYAML
 ```
 
+**`🚫 API quota exhausted` in cron.log?**
+- This is expected when the YouTube Data API (10,000 units/day free) or Gemini free quota is hit
+- The script exits cleanly — no email is sent, no videos are double-processed
+- Quota resets at midnight Pacific — the next scheduled cron run will proceed normally
+- To reduce quota usage: lower `videos_per_channel` in your profile YAML, or reduce cron frequency
+
 **API /ingest not working?**
-- Known issue: `/ingest` endpoint currently requires a `--profile` fix — use `./run-once.sh` for now
+- Known issue: `/ingest` endpoint currently requires a `--profile` fix — use `./run-finance.sh` or `./run-pm-ai.sh` for now
 
 ## 🤝 Contributing
 
