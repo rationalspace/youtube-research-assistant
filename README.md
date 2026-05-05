@@ -22,7 +22,7 @@ Automated YouTube video summarization tool that monitors your favourite creators
 - ✅ **Per-Profile Email Digests** — Each profile sends its own email with a `[profile]` subject prefix
 - ✅ **Duplicate Detection** — Tracks processed videos per profile to avoid redundant work
 - ✅ **Member-Only Detection** — Automatically skips restricted content
-- ✅ **Quota-Aware Early Exit** — Detects YouTube/Gemini API quota exhaustion immediately, stops processing, suppresses the email, and waits until the next scheduled run instead of retrying hourly
+- ✅ **Quota-Aware Early Exit** — Distinguishes fatal daily-limit exhaustion from recoverable per-minute rate limits; retries per-minute limits with a 65s backoff and exits immediately on daily exhaustion — no wasted retries, no bad emails
 - ✅ **Daily Automation** — Set it and forget it with cron
 
 ## 🏗️ Architecture
@@ -251,7 +251,7 @@ youtube-research-assistant/
 - **Python 3.8+**
 - **YouTube Data API v3** — Video metadata and channel info
 - **yt-dlp** — Audio extraction fallback
-- **Google Gemini 2.5 Flash** — AI transcription and summarization
+- **Google Gemini 2.0 Flash** — AI transcription and summarization (1,500 req/day free)
 - **SQLite + FTS5** — Local storage with full-text search
 - **FastAPI** — REST API layer
 - **PyYAML** — Profile configuration
@@ -285,6 +285,11 @@ source venv/bin/activate && pip install PyYAML
 - The script exits cleanly — no email is sent, no videos are double-processed
 - Quota resets at midnight Pacific — the next scheduled cron run will proceed normally
 - To reduce quota usage: lower `videos_per_channel` in your profile YAML, or reduce cron frequency
+
+**Gemini keeps retrying even after daily quota is hit?**
+- Ensure you are on the latest code (`git pull origin main`)
+- Old versions misclassified the combined per-day + per-minute violation as a recoverable per-minute limit, causing 4×65s retries per video before giving up
+- The fix in `_is_rate_limit_error()` treats any error that contains a per-day violation as fatal, so the script exits immediately instead of retrying
 
 **API /ingest not working?**
 - Known issue: `/ingest` endpoint currently requires a `--profile` fix — use `./run-finance.sh` or `./run-pm-ai.sh` for now
