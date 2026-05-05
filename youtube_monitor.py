@@ -86,13 +86,21 @@ class QuotaExceededError(Exception):
 
 
 def _is_rate_limit_error(exc):
-    """Return True if exc is a per-minute Gemini rate limit (recoverable after ~60s).
+    """Return True ONLY if exc is a pure per-minute rate limit with no daily quota violation.
 
-    Per-minute limits have quota_id containing 'PerMinute'. They are distinct from
-    daily quota exhaustion and should trigger a short wait + retry, not an early exit.
+    When the daily quota is exhausted the error often includes BOTH a per-day AND a
+    per-minute violation in its violations list.  Checking for 'perminute' alone would
+    misclassify a fatal daily-limit error as a recoverable rate limit, causing the script
+    to retry 4×65s per video before giving up silently.
+
+    Rule: a per-minute violation is only retryable when there is NO concurrent per-day
+    violation in the same error.
     """
     msg = str(exc).lower()
-    return 'perminute' in msg or 'per_minute' in msg
+    has_per_minute = 'perminute' in msg or 'per_minute' in msg
+    # Any of these strings indicate the DAILY quota bucket is also exhausted
+    has_per_day = 'perday' in msg or 'per_day' in msg or 'dailylimit' in msg
+    return has_per_minute and not has_per_day
 
 
 def _is_quota_error(exc):
@@ -118,10 +126,11 @@ def _is_quota_error(exc):
             return True
     except ImportError:
         pass
-    # Fallback: string match for daily-limit keywords only
+    # Fallback: string match for daily-limit keywords only.
+    # 'perday' catches quota_id: "GenerateRequestsPerDayPerProjectPerModel-FreeTier"
     msg = str(exc).lower()
     return any(kw in msg for kw in ('quotaexceeded', 'dailylimitexceeded',
-                                     'ratelimitexceeded', 'dailylimit'))
+                                     'ratelimitexceeded', 'dailylimit', 'perday'))
 
 
 def load_profile(profile_name):
@@ -187,8 +196,8 @@ class YouTubeMonitor:
 
         # Configure Gemini
         genai.configure(api_key=self.gemini_api_key)
-        # Use Gemini 2.5 Flash (supports audio and is the stable version)
-        self.model = genai.GenerativeModel('gemini-2.5-flash')
+        # Use Gemini 2.0 Flash — 1,500 requests/day on the free tier vs 20/day for 2.5-flash
+        self.model = genai.GenerativeModel('gemini-2.0-flash')
 
         self.processed_videos = self._load_processed_videos()
 
@@ -375,6 +384,10 @@ class YouTubeMonitor:
             try:
                 return self.model.generate_content(*args, **kwargs)
             except Exception as e:
+                # Daily quota exhaustion — raise immediately, do NOT retry.
+                # Let the caller's _is_quota_error() check handle it.
+                if _is_quota_error(e):
+                    raise
                 if _is_rate_limit_error(e) and attempt < max_retries:
                     wait = 65
                     print(f"    ⏳ Gemini rate limit hit — waiting {wait}s before retry "
