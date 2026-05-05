@@ -85,26 +85,43 @@ class QuotaExceededError(Exception):
     pass
 
 
+def _is_rate_limit_error(exc):
+    """Return True if exc is a per-minute Gemini rate limit (recoverable after ~60s).
+
+    Per-minute limits have quota_id containing 'PerMinute'. They are distinct from
+    daily quota exhaustion and should trigger a short wait + retry, not an early exit.
+    """
+    msg = str(exc).lower()
+    return 'perminute' in msg or 'per_minute' in msg
+
+
 def _is_quota_error(exc):
-    """Return True if exc represents an API quota exhaustion."""
-    # YouTube Data API: HttpError 403 with quota-related reason
+    """Return True if exc is a DAILY quota exhaustion (not recoverable until tomorrow).
+
+    Deliberately excludes per-minute rate limits — those are handled by
+    _is_rate_limit_error() and retried with a short sleep inside _gemini_call_with_retry().
+    """
+    # Per-minute rate limits are recoverable — don't treat them as fatal quota exhaustion
+    if _is_rate_limit_error(exc):
+        return False
+    # YouTube Data API: HttpError 403 with daily quota reason
     if isinstance(exc, HttpError):
         if exc.resp.status == 403 and any(
             kw in str(exc).lower()
             for kw in ('quotaexceeded', 'dailylimitexceeded', 'ratelimitexceeded')
         ):
             return True
-    # Gemini API: ResourceExhausted (429)
+    # Gemini API: ResourceExhausted that is NOT per-minute (i.e. daily limit)
     try:
         from google.api_core.exceptions import ResourceExhausted
         if isinstance(exc, ResourceExhausted):
             return True
     except ImportError:
         pass
-    # Fallback: string match on any exception
+    # Fallback: string match for daily-limit keywords only
     msg = str(exc).lower()
-    return any(kw in msg for kw in ('quotaexceeded', 'dailylimitexceeded', 'ratelimitexceeded',
-                                     'resource_exhausted', 'dailylimit'))
+    return any(kw in msg for kw in ('quotaexceeded', 'dailylimitexceeded',
+                                     'ratelimitexceeded', 'dailylimit'))
 
 
 def load_profile(profile_name):
@@ -345,6 +362,29 @@ class YouTubeMonitor:
             print(f"    Error downloading audio: {e}")
             return None
     
+    def _gemini_call_with_retry(self, *args, max_retries=4, **kwargs):
+        """Call self.model.generate_content with automatic retry on per-minute rate limits.
+
+        The Gemini free tier allows 5 requests/minute. With 5 channels × 3 videos the
+        script easily exceeds this. When a per-minute 429 is detected we wait 65s and
+        retry rather than aborting the whole run. After max_retries attempts the last
+        exception is re-raised so the caller can handle it normally.
+        """
+        last_exc = None
+        for attempt in range(max_retries + 1):
+            try:
+                return self.model.generate_content(*args, **kwargs)
+            except Exception as e:
+                if _is_rate_limit_error(e) and attempt < max_retries:
+                    wait = 65
+                    print(f"    ⏳ Gemini rate limit hit — waiting {wait}s before retry "
+                          f"({attempt + 1}/{max_retries})...")
+                    time.sleep(wait)
+                    last_exc = e
+                    continue
+                raise
+        raise last_exc  # should never reach here, but satisfies type checkers
+
     def transcribe_audio_with_gemini(self, audio_path):
         """Transcribe audio file using Gemini Flash."""
         try:
@@ -359,8 +399,8 @@ class YouTubeMonitor:
 Provide the full transcript of everything said in the audio. Do not summarize - transcribe word-for-word.
 Return only the transcript text, nothing else."""
             
-            # Generate transcription
-            response = self.model.generate_content([prompt, audio_file])
+            # Generate transcription (retries automatically on per-minute rate limits)
+            response = self._gemini_call_with_retry([prompt, audio_file])
             transcript = response.text
             
             # Clean up uploaded file from Gemini
@@ -478,7 +518,7 @@ Note: This summary is based on limited information (title and description only) 
 VIDEO URL: https://youtube.com/watch?v={video['id']}
 """
                 try:
-                    response = self.model.generate_content(prompt)
+                    response = self._gemini_call_with_retry(prompt)
                     summary = "⚠️ LIMITED INFO - Transcript not available, summary based on description only:\n\n" + response.text
                     return summary
                 except Exception as e:
@@ -510,7 +550,7 @@ Recommendation: Watch the video directly to get the full analysis."""
         )
         
         try:
-            response = self.model.generate_content(prompt)
+            response = self._gemini_call_with_retry(prompt)
             summary = response.text
             return summary
         except Exception as e:
