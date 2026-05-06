@@ -11,7 +11,8 @@ import argparse
 import yaml
 from datetime import datetime, timedelta
 from pathlib import Path
-import google.generativeai as genai
+from google import genai
+from google.genai import errors as genai_errors
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from youtube_transcript_api import YouTubeTranscriptApi
@@ -97,6 +98,7 @@ def _is_rate_limit_error(exc):
     violation in the same error.
     """
     msg = str(exc).lower()
+    # Matches both old snake_case (quota_id) and new camelCase (quotaId) SDK formats
     has_per_minute = 'perminute' in msg or 'per_minute' in msg
     # Any of these strings indicate the DAILY quota bucket is also exhausted
     has_per_day = 'perday' in msg or 'per_day' in msg or 'dailylimit' in msg
@@ -119,7 +121,11 @@ def _is_quota_error(exc):
             for kw in ('quotaexceeded', 'dailylimitexceeded', 'ratelimitexceeded')
         ):
             return True
-    # Gemini API: ResourceExhausted that is NOT per-minute (i.e. daily limit)
+    # New google-genai SDK: ClientError with HTTP 429 that is NOT a pure per-minute limit
+    # (per-minute was already excluded by the _is_rate_limit_error() guard above)
+    if isinstance(exc, genai_errors.ClientError) and getattr(exc, 'code', None) == 429:
+        return True
+    # Old google-generativeai SDK: ResourceExhausted
     try:
         from google.api_core.exceptions import ResourceExhausted
         if isinstance(exc, ResourceExhausted):
@@ -127,7 +133,7 @@ def _is_quota_error(exc):
     except ImportError:
         pass
     # Fallback: string match for daily-limit keywords only.
-    # 'perday' catches quota_id: "GenerateRequestsPerDayPerProjectPerModel-FreeTier"
+    # 'perday' catches quotaId: "GenerateRequestsPerDayPerProjectPerModel-FreeTier"
     msg = str(exc).lower()
     return any(kw in msg for kw in ('quotaexceeded', 'dailylimitexceeded',
                                      'ratelimitexceeded', 'dailylimit', 'perday'))
@@ -194,12 +200,10 @@ class YouTubeMonitor:
 
         self.youtube = build('youtube', 'v3', developerKey=self.youtube_api_key)
 
-        # Configure Gemini
-        genai.configure(api_key=self.gemini_api_key)
-        # Use Gemini 2.5 Flash Lite — lighter/faster variant with a more generous free-tier
-        # quota than the standard 2.5-flash (20 req/day). gemini-2.0-flash has limit: 0
-        # on this API key (not provisioned for free tier).
-        self.model = genai.GenerativeModel('gemini-2.5-flash-lite')
+        # Configure Gemini via the new google-genai SDK (google.generativeai is deprecated)
+        self.client = genai.Client(api_key=self.gemini_api_key)
+        # gemini-2.5-flash-lite: 20 req/day free. gemini-2.0-flash has limit:0 on this key.
+        self.model_name = 'gemini-2.5-flash-lite'
 
         self.processed_videos = self._load_processed_videos()
 
@@ -381,10 +385,12 @@ class YouTubeMonitor:
         retry rather than aborting the whole run. After max_retries attempts the last
         exception is re-raised so the caller can handle it normally.
         """
+        contents = args[0] if args else kwargs.get('contents')
         last_exc = None
         for attempt in range(max_retries + 1):
             try:
-                return self.model.generate_content(*args, **kwargs)
+                return self.client.models.generate_content(
+                    model=self.model_name, contents=contents)
             except Exception as e:
                 # Daily quota exhaustion — raise immediately, do NOT retry.
                 # Let the caller's _is_quota_error() check handle it.
@@ -405,21 +411,21 @@ class YouTubeMonitor:
         try:
             print(f"    Transcribing audio with Gemini Flash...")
             
-            # Upload audio file to Gemini
-            audio_file = genai.upload_file(audio_path)
-            
+            # Upload audio file to Gemini (new SDK: client.files.upload)
+            audio_file = self.client.files.upload(file=audio_path)
+
             # Create prompt for transcription
-            prompt = """Please transcribe this audio completely and accurately. 
-            
+            prompt = """Please transcribe this audio completely and accurately.
+
 Provide the full transcript of everything said in the audio. Do not summarize - transcribe word-for-word.
 Return only the transcript text, nothing else."""
-            
+
             # Generate transcription (retries automatically on per-minute rate limits)
             response = self._gemini_call_with_retry([prompt, audio_file])
             transcript = response.text
-            
-            # Clean up uploaded file from Gemini
-            audio_file.delete()
+
+            # Clean up uploaded file from Gemini (new SDK: client.files.delete)
+            self.client.files.delete(name=audio_file.name)
             
             print(f"    ✓ Transcription complete ({len(transcript)} characters)")
             return transcript
