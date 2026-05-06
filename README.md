@@ -6,7 +6,7 @@ Automated YouTube video summarization tool that monitors your favourite creators
 
 - **Monitors** multiple YouTube channels across configurable profiles
 - **Extracts** video transcripts (falls back to audio transcription if captions unavailable)
-- **Summarizes** content using Gemini 2.5 Flash with profile-specific prompts
+- **Summarizes** content using Gemini 2.5 Flash Lite with profile-specific prompts
 - **Stores** every summary in a local SQLite database with full-text search
 - **Delivers** separate email digests per profile (Finance + PM/AI)
 - **Exposes** a REST API for querying and integrating summaries downstream
@@ -18,11 +18,12 @@ Automated YouTube video summarization tool that monitors your favourite creators
 - ✅ **Audio Fallback** — Downloads and transcribes audio via Gemini when captions aren't available
 - ✅ **SQLite Local Storage** — Every summary persisted in `research.db` with FTS5 full-text search
 - ✅ **REST API** — FastAPI server on port 8001 to query summaries and trigger ingestion
-- ✅ **Multi-Profile Monitoring** — Finance (5 channels) + PM/AI (3 channels) with custom prompts
+- ✅ **Multi-Profile Monitoring** — Finance (3 channels) + PM/AI (3 channels) with custom prompts
 - ✅ **Per-Profile Email Digests** — Each profile sends its own email with a `[profile]` subject prefix
 - ✅ **Duplicate Detection** — Tracks processed videos per profile to avoid redundant work
 - ✅ **Member-Only Detection** — Automatically skips restricted content
-- ✅ **Quota-Aware Early Exit** — Distinguishes fatal daily-limit exhaustion from recoverable per-minute rate limits; retries per-minute limits with a 65s backoff and exits immediately on daily exhaustion — no wasted retries, no bad emails
+- ✅ **Quota-Aware Early Exit** — Distinguishes fatal daily-limit exhaustion from recoverable per-minute rate limits; retries per-minute limits with a 65s backoff and exits immediately on daily exhaustion — no wasted retries
+- ✅ **Partial Email on Quota Hit** — If quota is exhausted mid-run, sends an email with all summaries generated so far (marked `⚠️ Partial — quota hit`) rather than discarding everything
 - ✅ **Daily Automation** — Set it and forget it with cron
 
 ## 🏗️ Architecture
@@ -104,7 +105,7 @@ Each profile is a YAML file in `profiles/` that defines channels and an AI promp
 
 | Profile | Channels | Focus |
 |---------|----------|-------|
-| `finance` | Parkev, AkshatZayn, FinTek, SahilBhadviya, TickerSymbolYOU | Tickers, price targets, buy/sell ratings |
+| `finance` | Parkev, AkshatZayn, TickerSymbolYOU | Tickers, price targets, buy/sell ratings |
 | `pm_ai` | TheSkipPodcast, PeterYangYT, MaheshAIPMCommunity | Frameworks, AI tools, career advice, deep `[REF]`/`[TOOL]` analysis |
 
 ### Run a specific profile manually
@@ -115,6 +116,15 @@ python check_once.py --profile finance
 python check_once.py --profile pm_ai
 ```
 
+### Profile YAML options
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `channels` | required | List of `url` + `handle` pairs |
+| `videos_per_channel` | `2` | How many recent videos to check per channel per run |
+| `enable_reading_queue` | `false` | Whether to add unprocessed videos to a reading queue |
+| `prompt` | required | Gemini prompt template (use `{title}`, `{channel}`, `{published}`, `{transcript}`) |
+
 ### Add a new profile
 
 Create `profiles/myprofile.yaml`:
@@ -124,6 +134,7 @@ channels:
   - url: "https://www.youtube.com/@SomeChannel"
     handle: "@SomeChannel"
 
+videos_per_channel: 2
 enable_reading_queue: false
 
 prompt: |
@@ -201,7 +212,9 @@ See `API_DOCUMENTATION.md` for full details and code examples.
 
 ## ⏰ Cron / Daily Automation
 
-Each profile has its own cron-friendly shell script. Finance runs every day; PM/AI runs Mon/Wed/Fri to avoid burning through the Gemini free quota on less-active channels.
+Each profile has its own cron-friendly shell script. Finance runs every day; PM/AI runs Mon/Wed/Fri to avoid burning through the 20/day Gemini free quota on less-active channels.
+
+> **Why stagger?** Both profiles share the same Gemini API key and its 20 req/day free-tier quota. Running them simultaneously causes the first profile to exhaust the quota before the second can generate any summaries. Finance runs at **8 AM CST** (daily) and PM/AI runs at **10 AM CST** (Mon/Wed/Fri) — two hours apart so Finance always completes first.
 
 ### macOS/Linux cron setup
 
@@ -210,14 +223,19 @@ crontab -e
 ```
 
 ```cron
-# Finance: every day at 8 AM
+# Finance: every day at 8 AM CST
 0 8 * * * cd /path/to/youtube-research-assistant && PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin /bin/bash run-finance.sh >> cron.log 2>&1
 
-# PM/AI: Monday, Wednesday, Friday at 8 AM
-0 8 * * 1,3,5 cd /path/to/youtube-research-assistant && PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin /bin/bash run-pm-ai.sh >> cron.log 2>&1
+# PM/AI: Monday, Wednesday, Friday at 10 AM CST (staggered 2h after finance)
+0 10 * * 1,3,5 cd /path/to/youtube-research-assistant && PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin /bin/bash run-pm-ai.sh >> cron.log 2>&1
+
+# Log rotation: every Sunday at 7:55 AM (before the 8 AM finance run)
+55 7 * * 0 PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin /bin/bash /path/to/youtube-research-assistant/rotate-logs.sh
 ```
 
-> **Quota handling:** If the YouTube or Gemini API quota is exhausted mid-run, the script stops immediately, skips sending the email for that run, logs `🚫 API quota exhausted`, and exits cleanly. The next scheduled cron run picks up where it left off.
+> **Quota handling:** If the Gemini API daily quota (20 req/day) is exhausted mid-run, the script immediately stops processing further videos, sends a partial email with all summaries generated so far (subject is flagged `⚠️ Partial — quota hit`), and exits cleanly. Quota resets at midnight Pacific. If quota is exhausted before even the first summary is generated, no email is sent and a `🚫 API quota exhausted` message is logged.
+
+> **Partial email:** When quota hits mid-run (e.g., 4 of 6 videos processed), you still get the 4 completed summaries rather than nothing.
 
 ## 📁 Project Structure
 
@@ -229,9 +247,9 @@ youtube-research-assistant/
 ├── api.py                    # FastAPI server (port 8001)
 ├── query_db.py               # CLI tool for querying research.db
 ├── profiles/
-│   ├── finance.yaml          # Finance profile: 5 channels, ticker/rating prompt
+│   ├── finance.yaml          # Finance profile: 3 channels, ticker/rating prompt
 │   └── pm_ai.yaml            # PM/AI profile: 3 channels, deep analysis + GO DEEPER prompt
-├── research.db               # SQLite database (auto-created on first run)
+├── research.db               # SQLite database — auto-created on first run, NOT tracked in git
 ├── run-finance.sh            # Cron script: runs finance profile → sends email
 ├── run-pm-ai.sh              # Cron script: runs pm_ai profile → sends email
 ├── run-once.sh               # Generic single-run wrapper (pass --profile <name>)
@@ -251,7 +269,7 @@ youtube-research-assistant/
 - **Python 3.8+**
 - **YouTube Data API v3** — Video metadata and channel info
 - **yt-dlp** — Audio extraction fallback
-- **Google Gemini 2.0 Flash** — AI transcription and summarization (1,500 req/day free)
+- **Google Gemini 2.5 Flash Lite** via `google-genai` SDK v1.x — AI transcription and summarization (20 req/day on free tier; use [Gemini API Studio](https://aistudio.google.com/) to monitor quota)
 - **SQLite + FTS5** — Local storage with full-text search
 - **FastAPI** — REST API layer
 - **PyYAML** — Profile configuration
@@ -281,15 +299,19 @@ source venv/bin/activate && pip install PyYAML
 ```
 
 **`🚫 API quota exhausted` in cron.log?**
-- This is expected when the YouTube Data API (10,000 units/day free) or Gemini free quota is hit
-- The script exits cleanly — no email is sent, no videos are double-processed
-- Quota resets at midnight Pacific — the next scheduled cron run will proceed normally
-- To reduce quota usage: lower `videos_per_channel` in your profile YAML, or reduce cron frequency
+- The Gemini free tier allows **20 requests/day**. Each video summary consumes 1–2 requests (transcript + summary, or audio upload + summary). With 2 profiles × 3 channels × 2 videos = up to 12 requests per combined run.
+- The script exits cleanly — any completed summaries are still emailed, processed video IDs are saved so nothing is reprocessed.
+- Quota resets at midnight Pacific (2 AM CDT / 1 AM CST) — the next morning's cron run will proceed normally.
+- To reduce quota usage: lower `videos_per_channel` in your profile YAML (e.g., `videos_per_channel: 1`).
 
-**Gemini keeps retrying even after daily quota is hit?**
-- Ensure you are on the latest code (`git pull origin main`)
-- Old versions misclassified the combined per-day + per-minute violation as a recoverable per-minute limit, causing 4×65s retries per video before giving up
-- The fix in `_is_rate_limit_error()` treats any error that contains a per-day violation as fatal, so the script exits immediately instead of retrying
+**Got a partial email with `⚠️ Partial — quota hit` in the subject?**
+- This means quota was exhausted after some videos were processed — the email contains what was generated before the limit was hit.
+- Check `cron.log` for `🚫 API quota exhausted` to see which video triggered it.
+- The remaining videos will be picked up the next run (they are not marked as processed).
+
+**`ModuleNotFoundError: No module named 'google.generativeai'`?**
+- This project uses the newer `google-genai` SDK (`from google import genai`), not the deprecated `google-generativeai` package.
+- Run `pip install -r requirements.txt` to ensure you have `google-genai>=1.0.0`.
 
 **API /ingest not working?**
 - Known issue: `/ingest` endpoint currently requires a `--profile` fix — use `./run-finance.sh` or `./run-pm-ai.sh` for now
