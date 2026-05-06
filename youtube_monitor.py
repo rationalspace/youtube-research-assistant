@@ -651,8 +651,9 @@ Recommendation: Watch the video directly to get the full analysis."""
                 print(f"  ⚠️ Could not find channel ID for {handle}")
                 continue
 
+            videos_per_channel = self.profile_config.get('videos_per_channel', 2)
             try:
-                videos = self.get_latest_videos(channel_id, count=3)
+                videos = self.get_latest_videos(channel_id, count=videos_per_channel)
             except QuotaExceededError:
                 print(f"  🚫 YouTube API quota exhausted — stopping early\n")
                 quota_exhausted = True

@@ -1,40 +1,36 @@
-# Environment and credentials - NEVER commit these!
-.env
-*.log
-cron.log
-launchd.log
-launchd-error.log
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-venv/
-env/
-ENV/
-
-# OS files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-*.swp
-*.swo
-
-# Processed videos tracking
-.youtube_monitor_processed.json
-
-# Output summaries (optional - remove this line if you want to commit summaries)
-summaries/
-
-# Temporary audio files
-tmp/
-*.mp3
-*.m4a
-*.wav
 
 # Claude Code internal directory (worktrees, plans, session data)
+# Environment and credentials - NEVER commit these!
+# OS files
+# Output summaries (optional - remove this line if you want to commit summaries)
+# Processed videos tracking
+# Python
+# Temporary audio files
+*$py.class
+*.log
+*.m4a
+*.mp3
+*.py[cod]
+*.so
+*.swo
+*.swp
+*.wav
+.DS_Store
+.DS_Store?
+.Python
+.Spotlight-V100
+.Trashes
+._*
 .claude/
+.env
+.youtube_monitor_processed.json
+ENV/
+__pycache__/
+cron.log
+env/
+launchd-error.log
+launchd.log
+research.db
+summaries/
+tmp/
+venv/

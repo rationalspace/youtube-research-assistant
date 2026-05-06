@@ -6,6 +6,7 @@ channels:
   - url: "https://www.youtube.com/@TickerSymbolYOU"
     handle: "@TickerSymbolYOU"
 
+videos_per_channel: 2
 enable_reading_queue: false
 
 prompt: |
