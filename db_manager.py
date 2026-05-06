@@ -9,9 +9,23 @@ from datetime import datetime
 
 DB_PATH = Path(__file__).parent / "research.db"
 
+def _connect():
+    """Open a database connection with a generous timeout and WAL journal mode.
+
+    WAL (Write-Ahead Logging) allows concurrent readers alongside a single writer,
+    which prevents 'database is locked' errors when the API server and the monitor
+    script run at the same time.  The 30-second timeout means a write that can't
+    acquire the lock immediately will keep retrying for up to 30 seconds before
+    raising OperationalError.
+    """
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    return conn
+
+
 def init_database():
     """Initialize the database with required tables."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _connect()
     cursor = conn.cursor()
     
     # Create videos table
@@ -109,9 +123,9 @@ def insert_video_summary(video_data):
         int: Row ID of inserted record, or None if failed
     """
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = _connect()
         cursor = conn.cursor()
-        
+
         cursor.execute("""
             INSERT INTO videos (
                 video_id, channel_name, video_title, video_url,
@@ -151,7 +165,7 @@ def insert_video_summary(video_data):
 
 def get_video_by_id(video_id):
     """Get a video summary by video ID."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _connect()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     
@@ -174,10 +188,10 @@ def search_videos(search_term=None, from_date=None, channel=None, limit=10):
     Returns:
         List of video dictionaries
     """
-    conn = sqlite3.connect(DB_PATH)
+    conn = _connect()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-    
+
     if search_term:
         # Use full-text search
         query = """
@@ -222,7 +236,7 @@ def search_videos(search_term=None, from_date=None, channel=None, limit=10):
 
 def get_stats():
     """Get database statistics."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = _connect()
     cursor = conn.cursor()
     
     stats = {}

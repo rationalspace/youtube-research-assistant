@@ -196,8 +196,10 @@ class YouTubeMonitor:
 
         # Configure Gemini
         genai.configure(api_key=self.gemini_api_key)
-        # Use Gemini 2.0 Flash — 1,500 requests/day on the free tier vs 20/day for 2.5-flash
-        self.model = genai.GenerativeModel('gemini-2.0-flash')
+        # Use Gemini 2.5 Flash Lite — lighter/faster variant with a more generous free-tier
+        # quota than the standard 2.5-flash (20 req/day). gemini-2.0-flash has limit: 0
+        # on this API key (not provisioned for free tier).
+        self.model = genai.GenerativeModel('gemini-2.5-flash-lite')
 
         self.processed_videos = self._load_processed_videos()
 
@@ -616,37 +618,58 @@ Recommendation: Watch the video directly to get the full analysis."""
             return False
     
     def check_channels(self):
-        """Check all channels for new videos and generate report."""
+        """Check all channels for new videos and generate report.
+
+        Quota-safe: if the Gemini daily quota is exhausted mid-run, any summaries
+        already generated are still emailed and saved rather than being discarded.
+        A QuotaExceededError is only re-raised when zero summaries were produced.
+        """
         print(f"\n{'='*60}")
         print(f"YouTube Monitor Check - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"{'='*60}\n")
-        
+
         all_summaries = []
         new_videos_found = False
-        
+        quota_exhausted = False  # set True when we hit the daily API limit mid-run
+
         for channel_config in self.channels:
+            if quota_exhausted:
+                break
+
             handle = channel_config['handle']
             print(f"Checking channel: {handle}")
-            
-            channel_id = self.get_channel_id(handle)
+
+            # YouTube API quota failure → stop immediately
+            try:
+                channel_id = self.get_channel_id(handle)
+            except QuotaExceededError:
+                print(f"  🚫 YouTube API quota exhausted — stopping early\n")
+                quota_exhausted = True
+                break
+
             if not channel_id:
                 print(f"  ⚠️ Could not find channel ID for {handle}")
                 continue
-            
-            # Get last 3 videos from this channel (filtering out shorts and member-only)
-            videos = self.get_latest_videos(channel_id, count=3)
+
+            try:
+                videos = self.get_latest_videos(channel_id, count=3)
+            except QuotaExceededError:
+                print(f"  🚫 YouTube API quota exhausted — stopping early\n")
+                quota_exhausted = True
+                break
+
             print(f"  Found {len(videos)} valid video(s) (after filtering)\n")
-            
+
             for video in videos:
                 if video['id'] in self.processed_videos:
                     print(f"  ⏭️  Already processed: {video['title']}")
                     continue
-                
+
                 new_videos_found = True
                 print(f"  🆕 New video: {video['title']}")
                 print(f"      Duration: {video['duration_seconds']}s")
                 print(f"  📝 Generating summary...")
-                
+
                 # Check if video has transcript (if skip_no_transcript is enabled)
                 if self.profile_config.get('skip_no_transcript', False):
                     transcript = self.get_transcript(video['id'])
@@ -654,18 +677,25 @@ Recommendation: Watch the video directly to get the full analysis."""
                         print(f"  ⏭️  Skipping (no transcript available)")
                         self.processed_videos.add(video['id'])
                         continue
-                
-                summary = self.generate_summary(video)
-                
+
+                # Gemini quota failure → stop generating, send what we have
+                try:
+                    summary = self.generate_summary(video)
+                except QuotaExceededError:
+                    print(f"  🚫 Gemini quota exhausted — stopping after "
+                          f"{len(all_summaries)} summary(ies)\n")
+                    quota_exhausted = True
+                    break  # inner loop — outer loop checks quota_exhausted
+
                 # Skip if video is members-only
                 if summary == "SKIP_MEMBERS_ONLY":
                     print(f"  ⏭️  Skipping members-only video\n")
                     self.processed_videos.add(video['id'])
                     continue
-                
+
                 # Determine source type based on how we got the transcript
                 transcript_method = getattr(self, '_last_transcript_method', 'youtube_captions')
-                
+
                 video_summary = f"""
 {'='*60}
 📺 {video['title']}
@@ -679,7 +709,7 @@ URL: https://youtube.com/watch?v={video['id']}
 """
                 all_summaries.append(video_summary)
                 self.processed_videos.add(video['id'])
-                
+
                 # Save to database
                 db_data = {
                     'video_id': video['id'],
@@ -690,29 +720,34 @@ URL: https://youtube.com/watch?v={video['id']}
                     'source_type': transcript_method,
                     'summary_text': summary,
                     'duration_seconds': video.get('duration_seconds', 0),
-                    # Optional: could extract these from summary with additional parsing
                     'key_topics': None,
                     'recommendations': None,
                     'action_items': None
                 }
-                
+
                 row_id = insert_video_summary(db_data)
                 if row_id:
                     print(f"  💾 Saved to database (ID: {row_id})")
-                
+
                 print(f"  ✓ Summary generated\n")
-        
-        # Save processed videos
+
+        # Always persist the videos we successfully processed, even if we stopped early
         self._save_processed_videos()
-        
-        # Save summaries to file AND send email if new videos found
+
         if new_videos_found and all_summaries:
             timestamp = datetime.now().strftime('%Y-%m-%d')
             filename = f"daily_summary_{timestamp}.txt"
-            
+
+            quota_note = (
+                "\n⚠️  Note: Gemini API daily quota was exhausted mid-run. "
+                "This digest covers only the channels processed before the limit was hit. "
+                "Remaining channels will be included in tomorrow's email.\n"
+                if quota_exhausted else ""
+            )
+
             content = f"""Daily YouTube Video Summary - Profile: {self.profile_name}
 Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
+{quota_note}
 Found {len(all_summaries)} new video(s):
 
 {''.join(all_summaries)}
@@ -721,15 +756,21 @@ Found {len(all_summaries)} new video(s):
 Automated report from YouTube Monitor (profile: {self.profile_name}).
 """
 
-            # Save to file
             self.save_to_file(content, filename)
 
-            # Send email with same content
-            subject = f"[{self.profile_name}] 📊 Daily Video Summary - {len(all_summaries)} New Video(s)"
+            subject_suffix = " ⚠️ Partial — quota hit" if quota_exhausted else ""
+            subject = (f"[{self.profile_name}] 📊 Daily Video Summary "
+                       f"- {len(all_summaries)} New Video(s){subject_suffix}")
             self.send_email(subject, content)
+
+        elif quota_exhausted and not all_summaries:
+            # Quota hit before a single summary was produced — nothing useful to send
+            raise QuotaExceededError(
+                "Gemini quota exhausted before any summaries could be generated"
+            )
         else:
             print("\n📭 No new videos found.")
-        
+
         print(f"\n{'='*60}")
         print("Check complete!")
         print(f"{'='*60}\n")
