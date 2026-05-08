@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd agent — runs the Finance profile every day at 8:00 AM CST.
+
+  Unlike cron, launchd will fire the job on the next wake if the Mac was
+  asleep at the scheduled time (missed runs are caught up immediately).
+
+  Install:
+    cp launchd/com.youtube-monitor.finance.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.youtube-monitor.finance.plist
+
+  Uninstall:
+    launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.youtube-monitor.finance.plist
+
+  Logs: /Users/makkarmandeep/stock-summary-youtube/cron.log
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.youtube-monitor.finance</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/makkarmandeep/stock-summary-youtube/run-finance.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/makkarmandeep/stock-summary-youtube</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/makkarmandeep</string>
+        <key>TZ</key>
+        <string>America/Chicago</string>
+    </dict>
+
+    <!-- Every day at 8:00 AM CST. Missed runs fire on next wake. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key><integer>8</integer>
+        <key>Minute</key><integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/makkarmandeep/stock-summary-youtube/cron.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/makkarmandeep/stock-summary-youtube/cron.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

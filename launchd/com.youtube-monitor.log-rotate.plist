@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd agent — rotates cron.log every Sunday at 7:55 AM CST.
+
+  Runs 5 minutes before the Finance job so the new week starts with a clean log.
+  Keeps the last 4 weekly archives (cron.log.YYYYMMDD).
+
+  Install:
+    cp launchd/com.youtube-monitor.log-rotate.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.youtube-monitor.log-rotate.plist
+
+  Uninstall:
+    launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.youtube-monitor.log-rotate.plist
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.youtube-monitor.log-rotate</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/makkarmandeep/stock-summary-youtube/rotate-logs.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/makkarmandeep/stock-summary-youtube</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/makkarmandeep</string>
+        <key>TZ</key>
+        <string>America/Chicago</string>
+    </dict>
+
+    <!-- Sunday(0) at 7:55 AM CST — 5 min before the Finance job. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key><integer>0</integer>
+        <key>Hour</key><integer>7</integer>
+        <key>Minute</key><integer>55</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/makkarmandeep/stock-summary-youtube/cron.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/makkarmandeep/stock-summary-youtube/cron.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

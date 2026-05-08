@@ -210,27 +210,53 @@ Interactive docs: [http://localhost:8001/docs](http://localhost:8001/docs)
 
 See `API_DOCUMENTATION.md` for full details and code examples.
 
-## ⏰ Cron / Daily Automation
+## ⏰ Scheduling (macOS launchd)
 
-Each profile has its own cron-friendly shell script. Finance runs every day; PM/AI runs Mon/Wed/Fri to avoid burning through the 20/day Gemini free quota on less-active channels.
+The project uses **macOS launchd** rather than cron. The key advantage: launchd fires missed jobs immediately when the Mac wakes from sleep — so a closed laptop at 8 AM still gets its run the moment you open it.
 
-> **Why stagger?** Both profiles share the same Gemini API key and its 20 req/day free-tier quota. Running them simultaneously causes the first profile to exhaust the quota before the second can generate any summaries. Finance runs at **8 AM CST** (daily) and PM/AI runs at **10 AM CST** (Mon/Wed/Fri) — two hours apart so Finance always completes first.
+> **Why stagger?** Both profiles share the same Gemini API key and its 20 req/day free-tier quota. Finance runs at **8 AM CST** (daily) and PM/AI runs at **10 AM CST** (Mon/Wed/Fri) — two hours apart so Finance always finishes before PM/AI starts.
 
-### macOS/Linux cron setup
+### Install launchd agents
+
+Pre-built plists live in `launchd/`. Edit the `USERNAME` or paths if you're not `makkarmandeep`, then:
 
 ```bash
-crontab -e
+# Copy plists to the system LaunchAgents folder
+cp launchd/com.youtube-monitor.finance.plist   ~/Library/LaunchAgents/
+cp launchd/com.youtube-monitor.pm-ai.plist     ~/Library/LaunchAgents/
+cp launchd/com.youtube-monitor.log-rotate.plist ~/Library/LaunchAgents/
+
+# Load them (replace 501 with your uid — run: id -u)
+launchctl bootstrap gui/501 ~/Library/LaunchAgents/com.youtube-monitor.finance.plist
+launchctl bootstrap gui/501 ~/Library/LaunchAgents/com.youtube-monitor.pm-ai.plist
+launchctl bootstrap gui/501 ~/Library/LaunchAgents/com.youtube-monitor.log-rotate.plist
+
+# Verify all three are loaded (exit code 0 = healthy)
+launchctl list | grep youtube-monitor
 ```
 
-```cron
-# Finance: every day at 8 AM CST
-0 8 * * * cd /path/to/youtube-research-assistant && PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin /bin/bash run-finance.sh >> cron.log 2>&1
+### Schedule summary
 
-# PM/AI: Monday, Wednesday, Friday at 10 AM CST (staggered 2h after finance)
-0 10 * * 1,3,5 cd /path/to/youtube-research-assistant && PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin /bin/bash run-pm-ai.sh >> cron.log 2>&1
+| Agent | Runs | Time |
+|-------|------|------|
+| `com.youtube-monitor.finance` | Daily | 8:00 AM CST |
+| `com.youtube-monitor.pm-ai` | Mon / Wed / Fri | 10:00 AM CST |
+| `com.youtube-monitor.log-rotate` | Sunday | 7:55 AM CST |
 
-# Log rotation: every Sunday at 7:55 AM (before the 8 AM finance run)
-55 7 * * 0 PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin /bin/bash /path/to/youtube-research-assistant/rotate-logs.sh
+### Uninstall / reload after editing
+
+```bash
+# Unload (e.g. to edit a plist then reload)
+launchctl bootout gui/501 ~/Library/LaunchAgents/com.youtube-monitor.finance.plist
+
+# Reload
+launchctl bootstrap gui/501 ~/Library/LaunchAgents/com.youtube-monitor.finance.plist
+```
+
+### Manually trigger a run
+
+```bash
+launchctl kickstart -k gui/501/com.youtube-monitor.finance
 ```
 
 > **Quota handling:** If the Gemini API daily quota (20 req/day) is exhausted mid-run, the script immediately stops processing further videos, sends a partial email with all summaries generated so far (subject is flagged `⚠️ Partial — quota hit`), and exits cleanly. Quota resets at midnight Pacific. If quota is exhausted before even the first summary is generated, no email is sent and a `🚫 API quota exhausted` message is logged.
@@ -250,14 +276,19 @@ youtube-research-assistant/
 │   ├── finance.yaml          # Finance profile: 3 channels, ticker/rating prompt
 │   └── pm_ai.yaml            # PM/AI profile: 3 channels, deep analysis + GO DEEPER prompt
 ├── research.db               # SQLite database — auto-created on first run, NOT tracked in git
-├── run-finance.sh            # Cron script: runs finance profile → sends email
-├── run-pm-ai.sh              # Cron script: runs pm_ai profile → sends email
+├── run-finance.sh            # Shell entry point: activates venv, runs finance profile
+├── run-pm-ai.sh              # Shell entry point: activates venv, runs pm_ai profile
+├── rotate-logs.sh            # Weekly log rotation (keeps last 4 archives)
 ├── run-once.sh               # Generic single-run wrapper (pass --profile <name>)
 ├── run.sh                    # Continuous mode (checks every 24h, pass --profile <name>)
 ├── start_server.sh           # Starts FastAPI server on port 8001
 ├── setup.sh                  # One-time setup
 ├── requirements.txt          # Python dependencies
 ├── .env.template             # Environment variables template
+├── launchd/                  # macOS launchd agents (copy to ~/Library/LaunchAgents/)
+│   ├── com.youtube-monitor.finance.plist     # Daily 8 AM CST
+│   ├── com.youtube-monitor.pm-ai.plist       # Mon/Wed/Fri 10 AM CST
+│   └── com.youtube-monitor.log-rotate.plist  # Sunday 7:55 AM CST
 ├── summaries/                # File output per profile (summaries/finance/, summaries/pm_ai/)
 ├── API_DOCUMENTATION.md      # Full API reference
 ├── DATABASE_FEATURE.md       # Database schema and query guide
