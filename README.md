@@ -259,6 +259,8 @@ launchctl bootstrap gui/501 ~/Library/LaunchAgents/com.youtube-monitor.finance.p
 launchctl kickstart -k gui/501/com.youtube-monitor.finance
 ```
 
+> **Network safety:** Both scripts poll `googleapis.com` every 10s (up to 2 min) before making any API calls, so they safely handle the case where launchd fires before Wi-Fi is ready after wake.
+
 > **Quota handling:** If the Gemini API daily quota (20 req/day) is exhausted mid-run, the script immediately stops processing further videos, sends a partial email with all summaries generated so far (subject is flagged `⚠️ Partial — quota hit`), and exits cleanly. Quota resets at midnight Pacific. If quota is exhausted before even the first summary is generated, no email is sent and a `🚫 API quota exhausted` message is logged.
 
 > **Partial email:** When quota hits mid-run (e.g., 4 of 6 videos processed), you still get the 4 completed summaries rather than nothing.
@@ -339,6 +341,11 @@ source venv/bin/activate && pip install PyYAML
 - This means quota was exhausted after some videos were processed — the email contains what was generated before the limit was hit.
 - Check `cron.log` for `🚫 API quota exhausted` to see which video triggered it.
 - The remaining videos will be picked up the next run (they are not marked as processed).
+
+**Some channels skipped with `Broken pipe` or `Connection reset` errors in cron.log?**
+- This happens when launchd fires the job immediately after the Mac wakes from sleep, before Wi-Fi is fully established.
+- The scripts now poll `googleapis.com` every 10 seconds (up to 2 minutes) at startup and only proceed once the network is reachable — so this should self-heal automatically.
+- If you see it persistently, check that your Mac's Wi-Fi connects quickly after wake (System Settings → Wi-Fi).
 
 **`ModuleNotFoundError: No module named 'google.generativeai'`?**
 - This project uses the newer `google-genai` SDK (`from google import genai`), not the deprecated `google-generativeai` package.
