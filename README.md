@@ -342,10 +342,13 @@ source venv/bin/activate && pip install PyYAML
 - Check `cron.log` for `🚫 API quota exhausted` to see which video triggered it.
 - The remaining videos will be picked up the next run (they are not marked as processed).
 
-**Some channels skipped with `Broken pipe` or `Connection reset` errors in cron.log?**
-- This happens when launchd fires the job immediately after the Mac wakes from sleep, before Wi-Fi is fully established.
-- The scripts now poll `googleapis.com` every 10 seconds (up to 2 minutes) at startup and only proceed once the network is reachable — so this should self-heal automatically.
-- If you see it persistently, check that your Mac's Wi-Fi connects quickly after wake (System Settings → Wi-Fi).
+**`Broken pipe` / `Connection reset` / `503 UNAVAILABLE` errors in cron.log — some channels got no summary?**
+- These are transient errors: the network wasn't fully up when the API call fired, or Gemini was momentarily overloaded.
+- The scripts now **automatically retry** all three error types:
+  - YouTube API calls (`get_channel_id`, `get_latest_videos`): up to 3 retries, 15 / 30 / 45s wait
+  - Gemini API calls: up to 4 retries, 30 / 60 / 90 / 120s wait (on top of the existing per-minute rate-limit retry)
+- Additionally, both run scripts poll `googleapis.com` at startup (up to 2 min) before touching any API.
+- If you still see these errors after an update, check that your Mac's Wi-Fi reconnects quickly after wake.
 
 **`ModuleNotFoundError: No module named 'google.generativeai'`?**
 - This project uses the newer `google-genai` SDK (`from google import genai`), not the deprecated `google-generativeai` package.

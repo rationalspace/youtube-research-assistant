@@ -139,6 +139,29 @@ def _is_quota_error(exc):
                                      'ratelimitexceeded', 'dailylimit', 'perday'))
 
 
+def _is_transient_error(exc):
+    """Return True if exc is a temporary server/network error worth retrying.
+
+    Covers:
+    - Gemini 503 UNAVAILABLE (model temporarily overloaded — usually resolves in <60s)
+    - OS-level network errors: ECONNRESET (54) and EPIPE (32) from a freshly woken Mac
+    - Wrapped httpx/requests errors with the same underlying cause
+    """
+    # Gemini 503 via new google-genai SDK (ServerError)
+    if isinstance(exc, genai_errors.ServerError) and getattr(exc, 'code', None) == 503:
+        return True
+    # OS-level: Broken pipe (32) or Connection reset by peer (54)
+    if getattr(exc, 'errno', None) in (32, 54):
+        return True
+    # String fallback for exceptions wrapped by httpx / urllib3 / requests
+    msg = str(exc).lower()
+    if '503' in msg and ('unavailable' in msg or 'high demand' in msg):
+        return True
+    if 'connection reset' in msg or 'broken pipe' in msg:
+        return True
+    return False
+
+
 def load_profile(profile_name):
     """Load a profile YAML file from profiles/{name}.yaml.
 
@@ -223,99 +246,117 @@ class YouTubeMonitor:
             json.dump(list(self.processed_videos), f)
     
     def get_channel_id(self, handle):
-        """Get channel ID from handle."""
-        try:
-            # Remove @ if present
-            handle = handle.replace('@', '')
-            request = self.youtube.search().list(
-                part='snippet',
-                q=handle,
-                type='channel',
-                maxResults=1
-            )
-            response = request.execute()
-            if response['items']:
-                return response['items'][0]['snippet']['channelId']
-        except Exception as e:
-            if _is_quota_error(e):
-                raise QuotaExceededError(f"YouTube API quota exceeded: {e}") from e
-            print(f"Error getting channel ID for {handle}: {e}")
+        """Get channel ID from handle, with retry on transient network errors."""
+        handle_clean = handle.replace('@', '')
+        max_retries = 3
+        for attempt in range(max_retries + 1):
+            try:
+                request = self.youtube.search().list(
+                    part='snippet',
+                    q=handle_clean,
+                    type='channel',
+                    maxResults=1
+                )
+                response = request.execute()
+                if response['items']:
+                    return response['items'][0]['snippet']['channelId']
+                return None
+            except Exception as e:
+                if _is_quota_error(e):
+                    raise QuotaExceededError(f"YouTube API quota exceeded: {e}") from e
+                if _is_transient_error(e) and attempt < max_retries:
+                    wait = 15 * (attempt + 1)  # 15s, 30s, 45s
+                    print(f"    ⏳ Network error getting channel ID — waiting {wait}s "
+                          f"({attempt + 1}/{max_retries})...")
+                    time.sleep(wait)
+                    continue
+                print(f"Error getting channel ID for {handle}: {e}")
+                return None
         return None
     
     def get_latest_videos(self, channel_id, count=3):
-        """Get the latest N videos from a channel, filtering out shorts and member-only content."""
-        try:
-            # Fetch more videos than needed to account for filtering
-            request = self.youtube.search().list(
-                part='snippet',
-                channelId=channel_id,
-                type='video',
-                order='date',
-                maxResults=15  # Fetch extra to account for filtering
-            )
-            response = request.execute()
-            
-            valid_videos = []
-            video_ids = []
-            
-            # First pass: collect video IDs
-            for item in response.get('items', []):
-                video_ids.append(item['id']['videoId'])
-            
-            if not video_ids:
-                return []
-            
-            # Get video details including duration
-            video_details_request = self.youtube.videos().list(
-                part='contentDetails,status,snippet',
-                id=','.join(video_ids)
-            )
-            video_details = video_details_request.execute()
-            
-            # Second pass: filter videos
-            for video in video_details.get('items', []):
-                # Skip if we already have enough videos
-                if len(valid_videos) >= count:
-                    break
-                
-                video_id = video['id']
-                
-                # Get duration in ISO 8601 format (e.g., "PT15M33S")
-                duration_str = video['contentDetails']['duration']
-                duration_seconds = self._parse_duration(duration_str)
-                
-                # Note: We're keeping ALL videos now, including Shorts (even under 60s)
-                
-                # Check if video is private or unlisted
-                privacy_status = video['status'].get('privacyStatus', 'public')
-                if privacy_status != 'public':
-                    print(f"    ⏭️  Skipping {privacy_status} video: {video['snippet']['title']}")
+        """Get the latest N videos from a channel, with retry on transient network errors."""
+        max_retries = 3
+        for attempt in range(max_retries + 1):
+            try:
+                # Fetch more videos than needed to account for filtering
+                request = self.youtube.search().list(
+                    part='snippet',
+                    channelId=channel_id,
+                    type='video',
+                    order='date',
+                    maxResults=15  # Fetch extra to account for filtering
+                )
+                response = request.execute()
+
+                valid_videos = []
+                video_ids = []
+
+                # First pass: collect video IDs
+                for item in response.get('items', []):
+                    video_ids.append(item['id']['videoId'])
+
+                if not video_ids:
+                    return []
+
+                # Get video details including duration
+                video_details_request = self.youtube.videos().list(
+                    part='contentDetails,status,snippet',
+                    id=','.join(video_ids)
+                )
+                video_details = video_details_request.execute()
+
+                # Second pass: filter videos
+                for video in video_details.get('items', []):
+                    # Skip if we already have enough videos
+                    if len(valid_videos) >= count:
+                        break
+
+                    video_id = video['id']
+
+                    # Get duration in ISO 8601 format (e.g., "PT15M33S")
+                    duration_str = video['contentDetails']['duration']
+                    duration_seconds = self._parse_duration(duration_str)
+
+                    # Note: We're keeping ALL videos now, including Shorts (even under 60s)
+
+                    # Check if video is private or unlisted
+                    privacy_status = video['status'].get('privacyStatus', 'public')
+                    if privacy_status != 'public':
+                        print(f"    ⏭️  Skipping {privacy_status} video: {video['snippet']['title']}")
+                        continue
+
+                    # Note: We removed keyword-based member-only detection as it was too aggressive.
+                    # YouTube API doesn't directly expose member-only status in a reliable way.
+                    # If a video is truly members-only, we'll find out when we try to get the transcript/audio.
+                    # At that point, we can skip it or mark it accordingly.
+
+                    # Video passed all filters
+                    valid_videos.append({
+                        'id': video_id,
+                        'title': video['snippet']['title'],
+                        'published': video['snippet']['publishedAt'],
+                        'channel': video['snippet']['channelTitle'],
+                        'description': video['snippet'].get('description', ''),
+                        'duration_seconds': duration_seconds
+                    })
+
+                return valid_videos
+
+            except Exception as e:
+                if _is_quota_error(e):
+                    raise QuotaExceededError(f"YouTube API quota exceeded: {e}") from e
+                if _is_transient_error(e) and attempt < max_retries:
+                    wait = 15 * (attempt + 1)  # 15s, 30s, 45s
+                    print(f"    ⏳ Network error getting videos — waiting {wait}s "
+                          f"({attempt + 1}/{max_retries})...")
+                    time.sleep(wait)
                     continue
-                
-                # Note: We removed keyword-based member-only detection as it was too aggressive.
-                # YouTube API doesn't directly expose member-only status in a reliable way.
-                # If a video is truly members-only, we'll find out when we try to get the transcript/audio.
-                # At that point, we can skip it or mark it accordingly.
-                
-                # Video passed all filters
-                valid_videos.append({
-                    'id': video_id,
-                    'title': video['snippet']['title'],
-                    'published': video['snippet']['publishedAt'],
-                    'channel': video['snippet']['channelTitle'],
-                    'description': video['snippet'].get('description', ''),
-                    'duration_seconds': duration_seconds
-                })
-            
-            return valid_videos
-            
-        except Exception as e:
-            if _is_quota_error(e):
-                raise QuotaExceededError(f"YouTube API quota exceeded: {e}") from e
-            print(f"Error getting videos for channel {channel_id}: {e}")
-            import traceback
-            traceback.print_exc()
-            return []
+                print(f"Error getting videos for channel {channel_id}: {e}")
+                import traceback
+                traceback.print_exc()
+                return []
+        return []
     
     def _parse_duration(self, duration_str):
         """Parse ISO 8601 duration format (e.g., 'PT15M33S') to seconds."""
@@ -400,6 +441,14 @@ class YouTubeMonitor:
                     wait = 65
                     print(f"    ⏳ Gemini rate limit hit — waiting {wait}s before retry "
                           f"({attempt + 1}/{max_retries})...")
+                    time.sleep(wait)
+                    last_exc = e
+                    continue
+                # 503 overloaded or transient network error — retry with backoff
+                if _is_transient_error(e) and attempt < max_retries:
+                    wait = 30 * (attempt + 1)  # 30s, 60s, 90s, 120s
+                    print(f"    ⏳ Transient error ({type(e).__name__}) — waiting {wait}s "
+                          f"before retry ({attempt + 1}/{max_retries})...")
                     time.sleep(wait)
                     last_exc = e
                     continue
