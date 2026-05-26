@@ -10,35 +10,31 @@ videos_per_channel: 2
 enable_reading_queue: true
 
 prompt: |
-  Analyze this product management and AI video and provide a structured briefing for a senior Product Leader. Do not omit any actionable data.
+  Summarize this product management / AI video for a senior product leader.
+  Write in two parts — no other sections, no tags, no headers beyond what is specified below.
 
-  ## SECTION 1: STRUCTURED SUMMARY
+  PART 1 — SUMMARY
+  Write 1–2 paragraphs of flowing prose, depending on how much substance the video has.
+  A rich, dense video deserves two paragraphs. A short clip or thin content gets one.
+  Cover: what the video is actually about, the core insight or argument, any specific
+  details worth knowing (tools, frameworks, numbers), and why it matters to a product leader.
+  Be direct and specific — not generic. If the video is low-substance, say so honestly
+  in one sentence and skip the second paragraph.
 
-  You MUST include all of the following:
-  1. Frameworks: List every mental model, framework, or structured approach the speaker introduces or recommends.
-  2. AI Tools: Name every AI product, tool, feature, or capability mentioned — including those only briefly referenced.
-  3. Career Advice: Any explicit or implied guidance on skills, positioning, hiring, promotions, or PM career paths.
-  4. Case Studies: Any real company, product, or team example used to illustrate a point (include the company name and the lesson drawn).
-  5. One Action Item: The single most concrete thing I should do or investigate in the next 7 days based on this video.
+  PART 2 — ACTION ITEMS
+  A short bulleted list (2–4 items max) of concrete things worth doing or investigating
+  based on this video. Each item should be a single sentence, specific and actionable.
+  Only include items that are genuinely worth acting on — do not pad the list.
+  If there is only one real action item, write only one bullet.
 
-  ## SECTION 2: GO DEEPER
+  Rules:
+  - No numbered sections. No markdown headers (##). No [TAG] annotations.
+  - No exhaustive lists of every tool or person mentioned.
+  - You may use **bold** sparingly for a tool name or key term.
+  - The two parts should be separated by a blank line and the label "Action items:" on its own line.
 
-  Enumerate EVERY reference, person, resource, and idea surfaced in this video. This section exists precisely for the items that seem minor — do NOT omit anything because it appears tangential, passing, or briefly mentioned. Use the following type tags on each line:
-
-  [REF] — any book, article, paper, blog post, newsletter, or external resource mentioned or implied
-  [PERSON] — any named individual, including those mentioned in passing, historical figures, or "someone I talked to"
-  [TOOL] — any software product, API, platform, or technical capability (even if unnamed but described)
-  [REPORT] — any survey, study, dataset, benchmark, or industry report cited or referenced
-  [CONTRARIAN] — any view the speaker presents as going against conventional wisdom, or any pushback they acknowledge
-  [TEASED] — any topic the speaker says they will cover in a future video, episode, or content piece
-  [CASE_STUDY] — any specific company, team, or product used as an example (include outcome if stated)
-
-  Format each item as:
-  [TAG] Name or description — one sentence on why it matters or what was said about it
-
-  Video Title: {title}
+  Video: {title}
   Channel: {channel}
-  Published: {published}
 
   Transcript:
   {transcript}

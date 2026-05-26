@@ -1,9 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  launchd agent — runs the Finance profile every day at 8:00 AM CST.
+  launchd agent — runs the Finance profile once per day.
 
-  Unlike cron, launchd will fire the job on the next wake if the Mac was
-  asleep at the scheduled time (missed runs are caught up immediately).
+  Fires immediately on login/wake (RunAtLoad) and every 30 minutes thereafter.
+  check_once.py is idempotent via the processed_videos JSON — videos already
+  summarised are skipped instantly. The 30-min poll is a near-instant no-op on
+  all but the first run of the day (no new videos = nothing to process).
+
+  This "wake-triggered" approach means the monitor runs as soon as the laptop
+  comes on — no missed days due to the machine being asleep at a fixed time.
 
   Install:
     cp launchd/com.youtube-monitor.finance.plist ~/Library/LaunchAgents/
@@ -37,21 +42,20 @@
         <string>/Users/makkarmandeep</string>
         <key>TZ</key>
         <string>America/Chicago</string>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
     </dict>
 
-    <!-- Every day at 8:00 AM CST. Missed runs fire on next wake. -->
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key><integer>8</integer>
-        <key>Minute</key><integer>0</integer>
-    </dict>
+    <!-- Fire on login/wake, then every 30 minutes. -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StartInterval</key>
+    <integer>1800</integer>
 
     <key>StandardOutPath</key>
     <string>/Users/makkarmandeep/stock-summary-youtube/cron.log</string>
     <key>StandardErrorPath</key>
     <string>/Users/makkarmandeep/stock-summary-youtube/cron.log</string>
-
-    <key>RunAtLoad</key>
-    <false/>
 </dict>
 </plist>

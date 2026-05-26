@@ -7,6 +7,7 @@ Monitors specified YouTube channels for new videos and sends daily email summari
 import os
 import json
 import time
+import socket
 import argparse
 import yaml
 from datetime import datetime, timedelta
@@ -221,6 +222,12 @@ class YouTubeMonitor:
                    self.gmail_user, self.gmail_app_password]):
             raise ValueError("Missing required environment variables. See setup instructions.")
 
+        # Cap every outbound TCP socket operation at 60 s.
+        # The YouTube Data API, Gemini file uploads, and youtube_transcript_api
+        # do not expose a timeout kwarg; this is the only way to prevent an
+        # unresponsive server from stalling the process indefinitely.
+        socket.setdefaulttimeout(60.0)
+
         self.youtube = build('youtube', 'v3', developerKey=self.youtube_api_key)
 
         # Configure Gemini via the new google-genai SDK (google.generativeai is deprecated)
@@ -395,6 +402,9 @@ class YouTubeMonitor:
                 'outtmpl': str(temp_dir / f"{video_id}.%(ext)s"),
                 'quiet': True,
                 'no_warnings': True,
+                # Prevent yt-dlp from hanging if the CDN stalls mid-download.
+                # socket_timeout caps each individual socket read/connect operation.
+                'socket_timeout': 30,
             }
             
             url = f"https://www.youtube.com/watch?v={video_id}"
@@ -648,23 +658,116 @@ Recommendation: Watch the video directly to get the full analysis."""
             print(f"Error saving to file: {e}")
             return None
     
-    def send_email(self, subject, body):
-        """Send email report."""
+    def _md_to_html(self, text: str) -> str:
+        """Convert the minimal markdown Gemini produces into safe HTML."""
+        import re
+        # **bold**
+        text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
+        # *italic*
+        text = re.sub(r'\*(.+?)\*', r'<em>\1</em>', text)
+        # Bullet lines (- item or * item at line start)
+        lines = text.split('\n')
+        out, in_list = [], False
+        for line in lines:
+            stripped = line.strip()
+            if re.match(r'^[-*]\s+', stripped):
+                if not in_list:
+                    out.append('<ul style="margin:8px 0 8px 20px;padding:0;">')
+                    in_list = True
+                out.append(f'<li style="margin-bottom:4px;">{stripped[2:].strip()}</li>')
+            else:
+                if in_list:
+                    out.append('</ul>')
+                    in_list = False
+                if stripped:
+                    out.append(f'<p style="margin:0 0 10px;line-height:1.65;">{stripped}</p>')
+        if in_list:
+            out.append('</ul>')
+        return ''.join(out)
+
+    def _build_html_email(self, summaries: list, quota_exhausted: bool) -> str:
+        """Build a clean HTML email from the list of video summary dicts."""
+        date_str = datetime.now().strftime('%B %-d, %Y')
+        profile_label = self.profile_name.replace('_', ' ').title()
+
+        cards = []
+        for v in summaries:
+            mins = max(1, v['duration_seconds'] // 60)
+            # Parse ISO date to readable form
+            try:
+                pub = datetime.fromisoformat(v['published'].replace('Z', '+00:00'))
+                pub_str = pub.strftime('%b %-d')
+            except Exception:
+                pub_str = v['published'][:10]
+
+            summary_html = self._md_to_html(v['summary'])
+
+            cards.append(f"""
+    <div style="margin:0 0 32px;padding-bottom:32px;border-bottom:1px solid #e8e8e8;">
+      <div style="font-size:12px;color:#999;margin-bottom:6px;">
+        {v['channel']} &nbsp;·&nbsp; {pub_str} &nbsp;·&nbsp; {mins} min
+      </div>
+      <h2 style="margin:0 0 14px;font-size:18px;font-weight:600;line-height:1.35;">
+        <a href="{v['url']}" style="color:#1a1a1a;text-decoration:none;">{v['title']}</a>
+      </h2>
+      <div style="font-size:15px;color:#333;">
+        {summary_html}
+      </div>
+      <div style="margin-top:10px;">
+        <a href="{v['url']}" style="font-size:12px;color:#2980b9;text-decoration:none;">Watch on YouTube →</a>
+      </div>
+    </div>""")
+
+        quota_banner = ""
+        if quota_exhausted:
+            quota_banner = """
+    <div style="background:#fff8e1;border-left:4px solid #f39c12;padding:10px 14px;
+                border-radius:4px;font-size:13px;color:#7d4e00;margin-bottom:24px;">
+      ⚠️ Gemini quota hit mid-run — this digest is partial. Remaining videos will appear tomorrow.
+    </div>"""
+
+        return f"""<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="background:#f5f5f5;margin:0;padding:20px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <div style="max-width:620px;margin:0 auto;background:#fff;border-radius:8px;
+              padding:32px;box-shadow:0 2px 8px rgba(0,0,0,.06);">
+
+    <div style="border-bottom:2px solid #1a1a1a;padding-bottom:16px;margin-bottom:28px;">
+      <div style="font-size:12px;color:#999;margin-bottom:4px;">{date_str}</div>
+      <h1 style="margin:0;font-size:22px;font-weight:700;color:#1a1a1a;">
+        {profile_label} &mdash; {len(summaries)} new video{'s' if len(summaries) != 1 else ''}
+      </h1>
+    </div>
+    {quota_banner}
+    {''.join(cards)}
+
+    <div style="font-size:11px;color:#bbb;margin-top:8px;">
+      YouTube Monitor &nbsp;·&nbsp; {profile_label} profile &nbsp;·&nbsp; {date_str}
+    </div>
+  </div>
+</body>
+</html>"""
+
+    def send_email(self, subject, body, html_body=None):
+        """Send email report as multipart/alternative (HTML preferred, plain-text fallback)."""
         try:
             msg = MIMEMultipart('alternative')
             msg['Subject'] = subject
             msg['From'] = self.gmail_user
             msg['To'] = self.recipient_email
-            
-            # Create text part
-            text_part = MIMEText(body, 'plain')
-            msg.attach(text_part)
-            
-            # Send email
+
+            # Plain-text part (fallback for clients that can't render HTML)
+            msg.attach(MIMEText(body, 'plain'))
+
+            # HTML part (shown by default in modern email clients)
+            if html_body:
+                msg.attach(MIMEText(html_body, 'html'))
+
             with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
                 server.login(self.gmail_user, self.gmail_app_password)
                 server.send_message(msg)
-            
+
             print(f"✓ Email sent successfully to {self.recipient_email}")
             return True
         except Exception as e:
@@ -732,6 +835,7 @@ Recommendation: Watch the video directly to get the full analysis."""
                     if not transcript:
                         print(f"  ⏭️  Skipping (no transcript available)")
                         self.processed_videos.add(video['id'])
+                        self._save_processed_videos()
                         continue
 
                 # Gemini quota failure → stop generating, send what we have
@@ -747,31 +851,32 @@ Recommendation: Watch the video directly to get the full analysis."""
                 if summary == "SKIP_MEMBERS_ONLY":
                     print(f"  ⏭️  Skipping members-only video\n")
                     self.processed_videos.add(video['id'])
+                    self._save_processed_videos()
                     continue
 
                 # Determine source type based on how we got the transcript
                 transcript_method = getattr(self, '_last_transcript_method', 'youtube_captions')
 
-                video_summary = f"""
-{'='*60}
-📺 {video['title']}
-{'='*60}
-Channel: {video['channel']}
-Published: {video['published']}
-Duration: {video['duration_seconds']}s
-URL: https://youtube.com/watch?v={video['id']}
-
-{summary}
-"""
-                all_summaries.append(video_summary)
+                all_summaries.append({
+                    'title': video['title'],
+                    'channel': video['channel'],
+                    'published': video['published'],
+                    'duration_seconds': video.get('duration_seconds', 0),
+                    'url': f"https://youtube.com/watch?v={video['id']}",
+                    'summary': summary,
+                })
 
                 # If summary failed (Gemini 503 exhausted all retries), don't mark
                 # as processed and don't save to DB — next run will retry it.
-                summary_failed = summary.startswith("⚠️ Error generating summary:")
+                summary_failed = summary.startswith("⚠️ Error generating summary:")  # noqa: RUF001
                 if summary_failed:
                     print(f"  ⚠️  Summary failed (transient error) — will retry next run\n")
                 else:
                     self.processed_videos.add(video['id'])
+                    # Checkpoint immediately — if the run is killed or times out
+                    # after this point, the next run won't re-summarize this video
+                    # or send a duplicate email for it.
+                    self._save_processed_videos()
 
                     # Save to database
                     db_data = {
@@ -801,30 +906,39 @@ URL: https://youtube.com/watch?v={video['id']}
             timestamp = datetime.now().strftime('%Y-%m-%d')
             filename = f"daily_summary_{timestamp}.txt"
 
-            quota_note = (
-                "\n⚠️  Note: Gemini API daily quota was exhausted mid-run. "
-                "This digest covers only the channels processed before the limit was hit. "
-                "Remaining channels will be included in tomorrow's email.\n"
+            quota_note_txt = (
+                "\n⚠️  Gemini quota hit mid-run — digest is partial. "
+                "Remaining channels will appear in tomorrow's email.\n"
                 if quota_exhausted else ""
             )
 
-            content = f"""Daily YouTube Video Summary - Profile: {self.profile_name}
-Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-{quota_note}
-Found {len(all_summaries)} new video(s):
-
-{''.join(all_summaries)}
-
----
-Automated report from YouTube Monitor (profile: {self.profile_name}).
-"""
-
+            # Plain-text version (saved to file + fallback)
+            txt_parts = []
+            for v in all_summaries:
+                mins = v['duration_seconds'] // 60
+                txt_parts.append(
+                    f"\n{'─'*60}\n"
+                    f"{v['title']}\n"
+                    f"{v['channel']}  ·  {mins} min  ·  {v['url']}\n"
+                    f"{'─'*60}\n\n"
+                    f"{v['summary']}\n"
+                )
+            content = (
+                f"YouTube Monitor — {self.profile_name} — {datetime.now().strftime('%Y-%m-%d')}\n"
+                f"{quota_note_txt}"
+                f"{''.join(txt_parts)}\n"
+                f"---\nAutomated report from YouTube Monitor (profile: {self.profile_name}).\n"
+            )
             self.save_to_file(content, filename)
 
             subject_suffix = " ⚠️ Partial — quota hit" if quota_exhausted else ""
-            subject = (f"[{self.profile_name}] 📊 Daily Video Summary "
-                       f"- {len(all_summaries)} New Video(s){subject_suffix}")
-            self.send_email(subject, content)
+            n = len(all_summaries)
+            subject = (
+                f"[{self.profile_name}] {n} new video{'s' if n != 1 else ''}"
+                f"{subject_suffix}"
+            )
+            html_body = self._build_html_email(all_summaries, quota_exhausted)
+            self.send_email(subject, content, html_body)
 
         elif quota_exhausted and not all_summaries:
             # Quota hit before a single summary was produced — nothing useful to send

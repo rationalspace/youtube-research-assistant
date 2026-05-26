@@ -7,7 +7,24 @@ Ideal for use with cron/Task Scheduler.
 
 import sys
 import os
+import signal
 import argparse
+
+# Hard timeout: if the run hasn't finished in 30 minutes, abort.
+# Prevents check_once.py from hanging indefinitely on yt-dlp downloads
+# or Gemini API calls, which have no built-in connect/read deadlines.
+_HARD_TIMEOUT_SECONDS = 1800  # 30 minutes
+
+
+def _timeout_handler(signum, frame):
+    raise TimeoutError(
+        f"check_once exceeded {_HARD_TIMEOUT_SECONDS}s hard limit — "
+        "yt-dlp or Gemini API hung. Aborting."
+    )
+
+
+signal.signal(signal.SIGALRM, _timeout_handler)
+signal.alarm(_HARD_TIMEOUT_SECONDS)
 
 # Add support for .env file
 try:
@@ -37,8 +54,13 @@ def main():
         print(f"🔍 Running single check for profile: {args.profile}")
         monitor = YouTubeMonitor(args.profile, profile_config)
         monitor.check_channels()
+        signal.alarm(0)  # cancel hard timeout — run finished normally
         print("✅ Check complete!")
         return 0
+    except TimeoutError as e:
+        print(f"\n⏰ Hard timeout: {e}")
+        print("   The run was killed after 30 minutes. Check logs for the last operation.")
+        return 1
     except QuotaExceededError as e:
         print(f"\n🚫 API quota exhausted: {e}")
         print("   No email sent. Re-run tomorrow when quota resets.")
