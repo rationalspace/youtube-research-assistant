@@ -27,6 +27,7 @@
 ENV/
 __pycache__/
 cron.log
+cron.log.*
 env/
 launchd-error.log
 launchd.log
