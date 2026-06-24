@@ -854,6 +854,14 @@ Recommendation: Watch the video directly to get the full analysis."""
                     self._save_processed_videos()
                     continue
 
+                # If summary failed (Gemini 503 exhausted all retries), don't mark
+                # as processed, don't save to DB, and don't include it in the email —
+                # next run will retry it from scratch instead of mailing the error text.
+                summary_failed = summary.startswith("⚠️ Error generating summary:")  # noqa: RUF001
+                if summary_failed:
+                    print(f"  ⚠️  Summary failed (transient error) — will retry next run\n")
+                    continue
+
                 # Determine source type based on how we got the transcript
                 transcript_method = getattr(self, '_last_transcript_method', 'youtube_captions')
 
@@ -866,38 +874,32 @@ Recommendation: Watch the video directly to get the full analysis."""
                     'summary': summary,
                 })
 
-                # If summary failed (Gemini 503 exhausted all retries), don't mark
-                # as processed and don't save to DB — next run will retry it.
-                summary_failed = summary.startswith("⚠️ Error generating summary:")  # noqa: RUF001
-                if summary_failed:
-                    print(f"  ⚠️  Summary failed (transient error) — will retry next run\n")
-                else:
-                    self.processed_videos.add(video['id'])
-                    # Checkpoint immediately — if the run is killed or times out
-                    # after this point, the next run won't re-summarize this video
-                    # or send a duplicate email for it.
-                    self._save_processed_videos()
+                self.processed_videos.add(video['id'])
+                # Checkpoint immediately — if the run is killed or times out
+                # after this point, the next run won't re-summarize this video
+                # or send a duplicate email for it.
+                self._save_processed_videos()
 
-                    # Save to database
-                    db_data = {
-                        'video_id': video['id'],
-                        'channel_name': video['channel'],
-                        'video_title': video['title'],
-                        'video_url': f"https://youtube.com/watch?v={video['id']}",
-                        'published_date': video['published'],
-                        'source_type': transcript_method,
-                        'summary_text': summary,
-                        'duration_seconds': video.get('duration_seconds', 0),
-                        'key_topics': None,
-                        'recommendations': None,
-                        'action_items': None
-                    }
+                # Save to database
+                db_data = {
+                    'video_id': video['id'],
+                    'channel_name': video['channel'],
+                    'video_title': video['title'],
+                    'video_url': f"https://youtube.com/watch?v={video['id']}",
+                    'published_date': video['published'],
+                    'source_type': transcript_method,
+                    'summary_text': summary,
+                    'duration_seconds': video.get('duration_seconds', 0),
+                    'key_topics': None,
+                    'recommendations': None,
+                    'action_items': None
+                }
 
-                    row_id = insert_video_summary(db_data)
-                    if row_id:
-                        print(f"  💾 Saved to database (ID: {row_id})")
+                row_id = insert_video_summary(db_data)
+                if row_id:
+                    print(f"  💾 Saved to database (ID: {row_id})")
 
-                    print(f"  ✓ Summary generated\n")
+                print(f"  ✓ Summary generated\n")
 
         # Always persist the videos we successfully processed, even if we stopped early
         self._save_processed_videos()
