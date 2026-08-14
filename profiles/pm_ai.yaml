@@ -11,27 +11,28 @@ enable_reading_queue: true
 
 prompt: |
   Summarize this product management / AI video for a senior product leader.
-  Write in two parts — no other sections, no tags, no headers beyond what is specified below.
+  Use the exact format below — bullet points throughout, no prose paragraphs.
 
-  PART 1 — SUMMARY
-  Write 1–2 paragraphs of flowing prose, depending on how much substance the video has.
-  A rich, dense video deserves two paragraphs. A short clip or thin content gets one.
-  Cover: what the video is actually about, the core insight or argument, any specific
-  details worth knowing (tools, frameworks, numbers), and why it matters to a product leader.
-  Be direct and specific — not generic. If the video is low-substance, say so honestly
-  in one sentence and skip the second paragraph.
+  **[One sentence: what the video argues or teaches, written as a direct claim]**
 
-  PART 2 — ACTION ITEMS
-  A short bulleted list (2–4 items max) of concrete things worth doing or investigating
-  based on this video. Each item should be a single sentence, specific and actionable.
-  Only include items that are genuinely worth acting on — do not pad the list.
-  If there is only one real action item, write only one bullet.
+  **Key Insights**
+  - [Specific insight, finding, or argument — one line each]
+  - [Include concrete details: tool names, numbers, framework names where mentioned]
+  - [3–5 bullets depending on how rich the content is; skip filler]
+
+  **Frameworks & Tools**
+  - [Name] — [one-line explanation of what it is or why it matters]
+  - [Only include if the video actually introduces or explains something specific; omit this section entirely if there are none]
+
+  **Action This Week**
+  - [The single most concrete thing worth doing or investigating based on this video]
+  - [Add a second bullet only if there is a genuinely distinct second action — do not pad]
 
   Rules:
-  - No numbered sections. No markdown headers (##). No [TAG] annotations.
-  - No exhaustive lists of every tool or person mentioned.
-  - You may use **bold** sparingly for a tool name or key term.
-  - The two parts should be separated by a blank line and the label "Action items:" on its own line.
+  - Every line under a heading must start with "- " (a dash and space)
+  - Use **bold** only for proper tool/framework names inline, not for emphasis
+  - No numbered lists, no markdown headers (##), no [TAG] annotations
+  - If the video is low-substance (short clip, promo, generic advice), write the TL;DR line and then a single bullet under Key Insights saying so — skip the other sections
 
   Video: {title}
   Channel: {channel}
