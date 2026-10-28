@@ -357,6 +357,9 @@ source venv/bin/activate && pip install PyYAML
 **API /ingest not working?**
 - Known issue: `/ingest` endpoint currently requires a `--profile` fix — use `./run-finance.sh` or `./run-pm-ai.sh` for now
 
+**Ticker symbol looks wrong or truncated in a summary?**
+- The summarizer can occasionally output a wrong or truncated ticker symbol even from a correctly-transcribed video. The finance prompt requires full, verified tickers (or the spelled-out company name) to minimize this, but there's no automated validation step — treat any ticker from this tool as unverified until you cross-check it against the company name/financials in the summary.
+
 ## 🤝 Contributing
 
 Ideas welcome:
