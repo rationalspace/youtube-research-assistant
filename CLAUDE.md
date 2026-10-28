@@ -36,15 +36,15 @@ present the inferred rating as if it were confirmed content.
 ## Data quality caveat — ticker symbol errors
 
 Confirmed 2026-08-24: the summarizer (`gemini-2.5-flash-lite`, chosen for its free-tier
-quota — see `youtube_monitor.py`) can output a **wrong ticker symbol** even from a
-correctly-transcribed video, e.g. writing "CHR"/"LIT" instead of the real symbols
-COHR (Coherent Corp) / LITE (Lumentum Holdings). The DB stores only the final summary,
-not the raw transcript, so there's no way to tell after the fact whether the error came
-from the source captions or the model itself. There is no ticker-validation step in the
-pipeline. The prompt was tightened the same day to require full, verified ticker symbols
-instead of guessed abbreviations — but treat any ticker from this tool as **unverified
-until cross-checked** (e.g. does the company name/financials in the summary actually
-match that symbol) before acting on it, same caution as the LIMITED INFO caveat below.
+quota — see `youtube_monitor.py`) can output a **wrong, truncated ticker symbol** even
+from a correctly-transcribed video (e.g. dropping a letter from the real exchange
+symbol). The DB stores only the final summary, not the raw transcript, so there's no
+way to tell after the fact whether the error came from the source captions or the model
+itself. There is no ticker-validation step in the pipeline. The prompt was tightened the
+same day to require full, verified ticker symbols instead of guessed abbreviations —
+but treat any ticker from this tool as **unverified until cross-checked** (e.g. does the
+company name/financials in the summary actually match that symbol) before acting on it,
+same caution as the LIMITED INFO caveat below.
 
 ## Other files
 

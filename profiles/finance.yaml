@@ -37,10 +37,10 @@ prompt: |
   - No product leader framing, no generic advice, no "as an investor you should..."
   - If the video covers multiple unrelated stocks, repeat the Tickers & Prices / Thesis / Rating block for each
   - If the video has no specific tickers or price data (e.g. pure macro commentary), say so in the header line and summarise the macro view in The Thesis section
-  - Ticker accuracy is critical — never guess or abbreviate a ticker symbol. Use the real,
-    full exchange ticker for the company being discussed (e.g. Coherent Corp is COHR, not
-    CHR; Lumentum Holdings is LITE, not LIT). If you are not certain of the exact ticker
-    for a company mentioned, spell out the full company name instead of guessing a symbol.
+  - Ticker accuracy is critical — never guess, truncate, or abbreviate a ticker symbol.
+    Use the real, full exchange ticker for the company being discussed. If you are not
+    certain of the exact ticker for a company mentioned, spell out the full company name
+    instead of guessing a symbol.
 
   Video: {title}
   Channel: {channel}
